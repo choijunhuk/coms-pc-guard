@@ -4,7 +4,7 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-The portable Core policy, application identity, and `Guard.Service` persistence/reconciliation slices are complete. PR #5 is merged with hosted clean run `34701889964`; local full suites pass 242/242 in both default and `TZ=UTC` runs (Core 117, Service 125). `Guard.Service` is a class library, not an installed/running Windows Service. Windows enforcement, evidence collection, installer, UI, and native recovery remain blocked.
+The portable Core policy, application identity, persistence/reconciliation, and preview-only AppLocker compiler/XML slices are complete. PR #6 is merged with hosted clean run `34708235735`; local full suites pass 265/265 in both default and `TZ=UTC` runs (Core 117, Service 148). `Guard.Service` is a class library, not an installed/running Windows Service. Native AppLocker enforcement, evidence collection, installer, UI, and recovery remain `BLOCKED_WINDOWS_VM`.
 
 ## Repository map
 
@@ -29,4 +29,4 @@ TZ=UTC $SDK test ComsPcGuard.sln -c Release --no-build --no-restore --logger "co
 git diff --check
 ```
 
-The current matrix is 242/242 per timezone run (Core 117, Service 125). Identity matching uses AND within each approved Publisher/PackagedApp identity and OR across explicit approved identities; discovery remains Owner-confirmed. macOS and hosted-runner evidence proves only portable behavior. Next action is AppLocker preview/compiler plus Windows evidence-provider interfaces; no UI until Phase B.
+The current matrix is 265/265 per timezone run (Core 117, Service 148). AppLocker preview emits only deterministic standalone EXE XML: Publisher identities can produce member-SID Deny rules and a clean-inventory `Allow Everyone Path *` baseline; hash/package identities are blocked diagnostics. macOS and hosted-runner evidence proves only portable behavior. Next action is Owner/IPC contracts or an authorized Windows VM PoC; no UI until Phase B.

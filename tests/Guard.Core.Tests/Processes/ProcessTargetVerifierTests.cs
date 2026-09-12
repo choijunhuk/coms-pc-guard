@@ -11,6 +11,7 @@ namespace Guard.Core.Tests.Processes
         private static readonly DateTimeOffset CreationUtc = new(2026, 9, 13, 12, 0, 0, TimeSpan.Zero);
         private static readonly string[] ApprovedIdentityIds = ["approved-hash"];
         private static readonly string[] OrderedIdentityIds = ["a-hash", "z-hash"];
+        private static readonly string[] OrderedConstructorIdentityIds = ["a", "z"];
 
 #pragma warning disable CA1707 // Test names use requirement terminology as a readable behavior contract.
         [TestMethod]
@@ -100,6 +101,27 @@ namespace Guard.Core.Tests.Processes
             _ = Assert.ThrowsExactly<ArgumentException>(() => Snapshot(42, CreationUtc.ToOffset(TimeSpan.FromHours(9)), @"C:\Games\game.exe", ApprovedHash));
             _ = Assert.ThrowsExactly<ArgumentException>(() => Snapshot(42, CreationUtc, "", ApprovedHash));
             _ = Assert.ThrowsExactly<ArgumentNullException>(() => new ProcessImageSnapshot(42, CreationUtc, @"C:\Games\game.exe", null!));
+        }
+
+        [TestMethod]
+        public void Construct_ProcessTargetVerificationResult_RejectsContradictoryOrInvalidIdentityIds()
+        {
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ProcessTargetVerificationResult(true, []));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ProcessTargetVerificationResult(false, ["matched"]));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ProcessTargetVerificationResult(true, [null!]));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ProcessTargetVerificationResult(true, [""]));
+        }
+
+        [TestMethod]
+        public void Construct_ProcessTargetVerificationResult_NormalizesAndSnapshotsIdentityIds()
+        {
+            List<string> identityIds = ["z", "a", "z"];
+
+            ProcessTargetVerificationResult result = new(true, identityIds);
+            identityIds.Clear();
+
+            CollectionAssert.AreEqual(OrderedConstructorIdentityIds, result.MatchedIdentityIds.ToArray());
+            _ = Assert.ThrowsExactly<NotSupportedException>(() => ((System.Collections.IList)result.MatchedIdentityIds).Add("other"));
         }
 #pragma warning restore CA1707
 

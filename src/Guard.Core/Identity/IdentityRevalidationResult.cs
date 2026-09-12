@@ -24,14 +24,25 @@ namespace Guard.Core.Identity
             ArgumentNullException.ThrowIfNull(newEvidence);
 
             string[] identityIds = [.. matchedIdentityIds];
-            if (status == IdentityRevalidationStatus.StillApproved != (identityIds.Length > 0))
+            if (identityIds.Any(string.IsNullOrEmpty))
             {
-                throw new ArgumentException("Revalidation status and matched identity IDs must agree.", nameof(matchedIdentityIds));
+                throw new ArgumentException("Matched identity IDs cannot contain null or empty values.", nameof(matchedIdentityIds));
+            }
+
+            string[] orderedIds = [.. identityIds
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(identityId => identityId, StringComparer.Ordinal)];
+
+            bool isStillApproved = status == IdentityRevalidationStatus.StillApproved;
+            bool isMatched = reason == ApplicationMatchReason.Matched;
+            if (isStillApproved != isMatched || isMatched != (orderedIds.Length > 0))
+            {
+                throw new ArgumentException("Revalidation status, reason, and matched identity IDs must agree.", nameof(matchedIdentityIds));
             }
 
             Status = status;
             Reason = reason;
-            MatchedIdentityIds = Array.AsReadOnly(identityIds);
+            MatchedIdentityIds = Array.AsReadOnly(orderedIds);
             NewEvidence = newEvidence;
         }
 

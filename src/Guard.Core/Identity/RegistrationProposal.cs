@@ -9,8 +9,20 @@ namespace Guard.Core.Identity
             ArgumentNullException.ThrowIfNull(proposedIdentities);
             ArgumentNullException.ThrowIfNull(warnings);
 
-            ProposedIdentities = Array.AsReadOnly([.. proposedIdentities]);
-            Warnings = Array.AsReadOnly([.. warnings]);
+            ApplicationIdentity[] identitySnapshot = [.. proposedIdentities];
+            if (identitySnapshot.Any(identity => identity is null))
+            {
+                throw new ArgumentException("Proposed identities cannot contain null values.", nameof(proposedIdentities));
+            }
+
+            string[] warningSnapshot = [.. warnings];
+            if (warningSnapshot.Any(string.IsNullOrEmpty))
+            {
+                throw new ArgumentException("Warnings cannot contain null or empty values.", nameof(warnings));
+            }
+
+            ProposedIdentities = Array.AsReadOnly(identitySnapshot);
+            Warnings = Array.AsReadOnly(warningSnapshot);
             RequiresOwnerConfirmation = true;
         }
 

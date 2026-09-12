@@ -15,11 +15,11 @@
 
 | Suite | Default timezone | `TZ=UTC` |
 | --- | ---: | ---: |
-| `Guard.Core.Tests` | 110/110 passed | 110/110 passed |
+| `Guard.Core.Tests` | 117/117 passed | 117/117 passed |
 | `Guard.Service.Tests` | 125/125 passed | 125/125 passed |
-| **Total** | **235/235 passed** | **235/235 passed** |
+| **Total** | **242/242 passed** | **242/242 passed** |
 
-Application identity focused totals: contracts 26, matcher 7, workflow 10, cache 3, process 7; all pass. (The full Core total is 110.)
+Application identity focused totals: contracts 19, matcher 9, workflow 13, cache 4, process 9; 54/54 pass. (The full Core total is 117.)
 
 Core performance tests observed active-grant and schedule p95 below the `<= 5 ms` contract in both runs. Service coverage includes real temporary SQLite initialization/schema, transactional artifact/attempt/observation state, validation and capability boundaries, cancellation-pending behavior, operation-gate busy behavior, observe-first recovery, stable action identities, and last-good restore.
 
@@ -38,7 +38,7 @@ Read-only physical inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.
 | Evidence | Classification |
 | --- | --- |
 | Locked portable restore/format/Release build | `PASS` |
-| Core policy and portable identity behavior | `PASS` (110/110 per run) |
+| Core policy and portable identity behavior | `PASS` (117/117 per run) |
 | Guard.Service SQLite/reconciliation behavior | `PASS` (125/125 per run) |
 | Windows evidence provider/signature/AppLocker/service/ACL/IPC/UI/installer/termination | `BLOCKED_WINDOWS_VM` |
 | WiX eligibility/EULA | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |

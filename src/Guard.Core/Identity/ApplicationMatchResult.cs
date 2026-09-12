@@ -8,7 +8,13 @@ namespace Guard.Core.Identity
         {
             ArgumentNullException.ThrowIfNull(matchedIdentityIds);
 
-            string[] orderedIds = [.. matchedIdentityIds
+            string[] identityIds = [.. matchedIdentityIds];
+            if (identityIds.Any(string.IsNullOrEmpty))
+            {
+                throw new ArgumentException("Matched identity IDs cannot contain null or empty values.", nameof(matchedIdentityIds));
+            }
+
+            string[] orderedIds = [.. identityIds
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(identityId => identityId, StringComparer.Ordinal)];
 

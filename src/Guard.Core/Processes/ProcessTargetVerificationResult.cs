@@ -8,16 +8,22 @@ namespace Guard.Core.Processes
         {
             ArgumentNullException.ThrowIfNull(matchedIdentityIds);
 
-            string[] identityIds = [.. matchedIdentityIds
+            string[] identityIds = [.. matchedIdentityIds];
+            if (identityIds.Any(string.IsNullOrEmpty))
+            {
+                throw new ArgumentException("Matched identity IDs cannot contain null or empty values.", nameof(matchedIdentityIds));
+            }
+
+            string[] orderedIds = [.. identityIds
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(identityId => identityId, StringComparer.Ordinal)];
-            if (isVerified != (identityIds.Length > 0))
+            if (isVerified != (orderedIds.Length > 0))
             {
                 throw new ArgumentException("Verification state and matched identity IDs must agree.", nameof(matchedIdentityIds));
             }
 
             IsVerified = isVerified;
-            MatchedIdentityIds = Array.AsReadOnly(identityIds);
+            MatchedIdentityIds = Array.AsReadOnly(orderedIds);
         }
 
         public bool IsVerified { get; }

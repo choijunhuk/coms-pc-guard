@@ -13,6 +13,7 @@ namespace Guard.Core.Tests.Identity
         private static readonly string[] HashAIdentityId = ["hash-a"];
         private static readonly string[] HashBIdentityId = ["hash-b"];
         private static readonly string[] PackageBIdentityId = ["package-b"];
+        private static readonly string[] OrderedConstructorIdentityIds = ["a", "z"];
 
 #pragma warning disable CA1707 // Test names use requirement terminology as a readable behavior contract.
         [TestMethod]
@@ -88,6 +89,45 @@ namespace Guard.Core.Tests.Identity
             Assert.HasCount(1, proposal.Warnings);
             _ = Assert.ThrowsExactly<NotSupportedException>(() => ((IList)proposal.ProposedIdentities).Add(new FileHashApplicationIdentity("other", HashB)));
             _ = Assert.ThrowsExactly<NotSupportedException>(() => ((IList)proposal.Warnings).Add("other"));
+        }
+
+        [TestMethod]
+        public void Construct_RegistrationProposal_RejectsInvalidCollectionElements()
+        {
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new RegistrationProposal([null!], []));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new RegistrationProposal([], [null!]));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new RegistrationProposal([], [""]));
+        }
+
+        [TestMethod]
+        public void Construct_IdentityRevalidationResult_RejectsInvalidOrContradictoryState()
+        {
+            ApplicationEvidence evidence = new FileHashApplicationEvidence(HashA);
+
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new IdentityRevalidationResult((IdentityRevalidationStatus)999, ApplicationMatchReason.Matched, ["matched"], evidence));
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.StillApproved, (ApplicationMatchReason)999, ["matched"], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.StillApproved, ApplicationMatchReason.NoApprovedIdentityMatched, ["matched"], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.RequiresOwnerReview, ApplicationMatchReason.Matched, [], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.StillApproved, ApplicationMatchReason.Matched, [], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.RequiresOwnerReview, ApplicationMatchReason.NoApprovedIdentityMatched, ["matched"], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.StillApproved, ApplicationMatchReason.Matched, [null!], evidence));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new IdentityRevalidationResult(IdentityRevalidationStatus.StillApproved, ApplicationMatchReason.Matched, [""], evidence));
+        }
+
+        [TestMethod]
+        public void Construct_IdentityRevalidationResult_NormalizesAndSnapshotsIdentityIds()
+        {
+            List<string> identityIds = ["z", "a", "z"];
+
+            IdentityRevalidationResult result = new(
+                IdentityRevalidationStatus.StillApproved,
+                ApplicationMatchReason.Matched,
+                identityIds,
+                new FileHashApplicationEvidence(HashA));
+            identityIds.Clear();
+
+            CollectionAssert.AreEqual(OrderedConstructorIdentityIds, result.MatchedIdentityIds.ToArray());
+            _ = Assert.ThrowsExactly<NotSupportedException>(() => ((IList)result.MatchedIdentityIds).Add("other"));
         }
 
         [TestMethod]

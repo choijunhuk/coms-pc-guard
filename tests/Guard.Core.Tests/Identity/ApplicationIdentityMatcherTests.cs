@@ -8,6 +8,7 @@ namespace Guard.Core.Tests.Identity
     {
         private const string Hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         private static readonly string[] OrderedHashIdentityIds = ["a-hash", "z-hash"];
+        private static readonly string[] OrderedConstructorIdentityIds = ["a", "z"];
 
 #pragma warning disable CA1707 // Test names use requirement terminology as a readable behavior contract.
         [TestMethod]
@@ -98,6 +99,28 @@ namespace Guard.Core.Tests.Identity
             Assert.IsFalse(result.IsMatch);
             Assert.AreEqual(ApplicationMatchReason.NoApprovedIdentityMatched, result.Reason);
             Assert.HasCount(0, result.MatchedIdentityIds);
+        }
+
+        [TestMethod]
+        public void Construct_ApplicationMatchResult_RejectsInvalidReasonAndIdentityIdState()
+        {
+            _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new ApplicationMatchResult((ApplicationMatchReason)999, []));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ApplicationMatchResult(ApplicationMatchReason.Matched, []));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ApplicationMatchResult(ApplicationMatchReason.NoApprovedIdentityMatched, ["matched"]));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ApplicationMatchResult(ApplicationMatchReason.Matched, [null!]));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new ApplicationMatchResult(ApplicationMatchReason.Matched, [""]));
+        }
+
+        [TestMethod]
+        public void Construct_ApplicationMatchResult_NormalizesAndSnapshotsIdentityIds()
+        {
+            List<string> identityIds = ["z", "a", "z"];
+
+            ApplicationMatchResult result = new(ApplicationMatchReason.Matched, identityIds);
+            identityIds.Clear();
+
+            CollectionAssert.AreEqual(OrderedConstructorIdentityIds, result.MatchedIdentityIds.ToArray());
+            _ = Assert.ThrowsExactly<NotSupportedException>(() => ((System.Collections.IList)result.MatchedIdentityIds).Add("other"));
         }
 #pragma warning restore CA1707
 

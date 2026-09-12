@@ -7,20 +7,23 @@ namespace Guard.Core.Policies
 #pragma warning disable CA1822 // Evaluation is an instance service contract for later policy dependencies.
         public PolicyDecision Evaluate(PolicyDefinition policy, PolicyEvaluationRequest request)
         {
-            ArgumentNullException.ThrowIfNull(policy);
-            ArgumentNullException.ThrowIfNull(request);
+            ValidatedPolicy validatedPolicy = PolicyInputValidator.ValidateAndSnapshot(policy);
+            PolicyInputValidator.Validate(request);
 
             if (!request.IsRegisteredApp)
             {
                 return new PolicyDecision(
                     PolicyDecisionKind.Allowed,
-                    PolicyReasonCode.UnregisteredApp,
-                    [],
-                    null,
-                    policy.Version);
+                PolicyReasonCode.UnregisteredApp,
+                [],
+                null,
+                policy.Version);
             }
 
-            ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(policy, request.NowUtc);
+            ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(
+                validatedPolicy.TimeZone,
+                validatedPolicy.WeeklyRules,
+                request.NowUtc);
             return schedule.IsRestricted
                 ? new PolicyDecision(
                     PolicyDecisionKind.Restricted,

@@ -7,58 +7,85 @@ namespace Guard.Core.Schedules
 #pragma warning disable CA1822 // Evaluation is an instance service contract for later schedule dependencies.
         public ScheduleEvaluation Evaluate(PolicyDefinition policy, DateTimeOffset nowUtc)
         {
-            ArgumentNullException.ThrowIfNull(policy);
+            ValidatedPolicy validatedPolicy = PolicyInputValidator.ValidateAndSnapshot(policy);
+            return Evaluate(validatedPolicy.TimeZone, validatedPolicy.WeeklyRules, nowUtc);
+        }
 
-            DateTimeOffset localNow = TimeZoneInfo.ConvertTime(nowUtc.ToUniversalTime(), policy.TimeZone);
-            TimeOnly localTime = TimeOnly.FromDateTime(localNow.DateTime);
-            string[] matchedRuleIds = [.. policy.WeeklyRules
-                .Where(rule => rule.DayOfWeek == localNow.DayOfWeek && rule.Window.ContainsSameDay(localTime))
-                .Select(rule => rule.Id)];
+        internal ScheduleEvaluation Evaluate(
+            TimeZoneInfo timeZone,
+            IReadOnlyList<WeeklyRestrictionRule> weeklyRules,
+            DateTimeOffset nowUtc)
+        {
+            ArgumentNullException.ThrowIfNull(timeZone);
+            ArgumentNullException.ThrowIfNull(weeklyRules);
+
+            string[] matchedRuleIds = GetMatchedRuleIds(timeZone, weeklyRules, nowUtc);
 
             return new ScheduleEvaluation(
                 matchedRuleIds.Length > 0,
                 matchedRuleIds,
-                FindNextTransition(policy, localNow));
+                FindNextTransition(timeZone, weeklyRules, nowUtc));
         }
 #pragma warning restore CA1822
 
-        private static DateTimeOffset? FindNextTransition(PolicyDefinition policy, DateTimeOffset localNow)
+        private static string[] GetMatchedRuleIds(
+            TimeZoneInfo timeZone,
+            IReadOnlyList<WeeklyRestrictionRule> weeklyRules,
+            DateTimeOffset nowUtc)
         {
-            DateTimeOffset? nextTransition = null;
+            DateTimeOffset localNow = TimeZoneInfo.ConvertTime(nowUtc.ToUniversalTime(), timeZone);
+            TimeOnly localTime = TimeOnly.FromDateTime(localNow.DateTime);
+            return [.. weeklyRules
+                .Where(rule => rule.DayOfWeek == localNow.DayOfWeek && rule.Window.ContainsSameDay(localTime))
+                .Select(rule => rule.Id)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(ruleId => ruleId, StringComparer.Ordinal)];
+        }
+
+        private static DateTimeOffset? FindNextTransition(
+            TimeZoneInfo timeZone,
+            IReadOnlyList<WeeklyRestrictionRule> weeklyRules,
+            DateTimeOffset nowUtc)
+        {
+            DateTimeOffset utcNow = nowUtc.ToUniversalTime();
+            DateTimeOffset localNow = TimeZoneInfo.ConvertTime(utcNow, timeZone);
             DateOnly firstDate = DateOnly.FromDateTime(localNow.DateTime);
+            HashSet<DateTimeOffset> candidates = [];
 
             for (int dayOffset = 0; dayOffset <= 7; dayOffset++)
             {
                 DateOnly date = firstDate.AddDays(dayOffset);
-                foreach (WeeklyRestrictionRule rule in policy.WeeklyRules.Where(rule => rule.DayOfWeek == date.DayOfWeek))
+                foreach (WeeklyRestrictionRule rule in weeklyRules.Where(rule => rule.DayOfWeek == date.DayOfWeek))
                 {
-                    ConsiderTransition(policy.TimeZone, date, rule.Window.StartInclusive, localNow, ref nextTransition);
-
-                    if (!rule.Window.IsFullDay)
+                    if (rule.Window.IsFullDay)
                     {
-                        DateOnly endDate = rule.Window.SpansMidnight ? date.AddDays(1) : date;
-                        ConsiderTransition(policy.TimeZone, endDate, rule.Window.EndExclusive, localNow, ref nextTransition);
+                        _ = candidates.Add(ToUtc(timeZone, date, TimeOnly.MinValue));
+                        continue;
                     }
+
+                    _ = candidates.Add(ToUtc(timeZone, date, rule.Window.StartInclusive));
+                    DateOnly endDate = rule.Window.SpansMidnight ? date.AddDays(1) : date;
+                    _ = candidates.Add(ToUtc(timeZone, endDate, rule.Window.EndExclusive));
                 }
             }
 
-            return nextTransition;
+            foreach (DateTimeOffset candidate in candidates.Where(candidate => candidate > utcNow).Order())
+            {
+                bool restrictedBefore = GetMatchedRuleIds(timeZone, weeklyRules, candidate.AddTicks(-1)).Length > 0;
+                bool restrictedAt = GetMatchedRuleIds(timeZone, weeklyRules, candidate).Length > 0;
+                if (restrictedBefore != restrictedAt)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
 
-        private static void ConsiderTransition(
-            TimeZoneInfo timeZone,
-            DateOnly date,
-            TimeOnly time,
-            DateTimeOffset localNow,
-            ref DateTimeOffset? nextTransition)
+        private static DateTimeOffset ToUtc(TimeZoneInfo timeZone, DateOnly date, TimeOnly time)
         {
             DateTime localDateTime = date.ToDateTime(time, DateTimeKind.Unspecified);
-            DateTimeOffset candidate = new(TimeZoneInfo.ConvertTimeToUtc(localDateTime, timeZone));
-
-            if (candidate > localNow.ToUniversalTime() && (nextTransition is null || candidate < nextTransition))
-            {
-                nextTransition = candidate;
-            }
+            return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(localDateTime, timeZone));
         }
     }
 }

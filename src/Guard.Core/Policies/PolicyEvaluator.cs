@@ -148,7 +148,7 @@ namespace Guard.Core.Policies
                     candidate);
                 if (before != at)
                 {
-                    return candidate;
+                    return candidate.ToUniversalTime();
                 }
             }
 

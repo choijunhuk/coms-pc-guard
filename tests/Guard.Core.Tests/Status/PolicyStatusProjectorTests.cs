@@ -1,5 +1,6 @@
 using Guard.Core.Policies;
 using Guard.Core.Status;
+using Guard.Core.Tests.TestData;
 
 namespace Guard.Core.Tests.Status
 {
@@ -41,6 +42,62 @@ namespace Guard.Core.Tests.Status
             Assert.AreEqual(DisplayState.Restricted, actual.DisplayState);
             Assert.AreEqual("OBSERVED_RESTRICTED", actual.ExplanationCode);
             Assert.AreSame(applied, actual.Applied);
+        }
+
+        [TestMethod]
+        public void EvaluateThenProject_DistinctMemberAndAppScopes_MatchExactlyOrDegrade()
+        {
+            DateTimeOffset evaluationTime = new(2026, 9, 14, 0, 0, 0, TimeSpan.Zero);
+            const string memberSid = "S-1-5-21-member-704";
+            const string appId = "coms.game.orbit";
+            PolicyDecision desired = new PolicyEvaluator().Evaluate(
+                PolicyTestData.CreateDefaultPolicy(),
+                new PolicyEvaluationRequest(evaluationTime, memberSid, appId, IsRegisteredApp: true));
+            PolicyStatusProjector projector = new();
+
+            PolicyStatus matching = projector.Project(
+                desired,
+                new AppliedObservation(
+                    desired.PolicyVersion,
+                    AppliedDecisionKind.Restricted,
+                    evaluationTime,
+                    memberSid,
+                    appId,
+                    externalDenyPresent: false),
+                PolicyHealth.Healthy,
+                evaluationTime,
+                Freshness);
+            PolicyStatus wrongMember = projector.Project(
+                desired,
+                new AppliedObservation(
+                    desired.PolicyVersion,
+                    AppliedDecisionKind.Restricted,
+                    evaluationTime,
+                    "S-1-5-21-member-999",
+                    appId,
+                    externalDenyPresent: false),
+                PolicyHealth.Healthy,
+                evaluationTime,
+                Freshness);
+            PolicyStatus wrongApp = projector.Project(
+                desired,
+                new AppliedObservation(
+                    desired.PolicyVersion,
+                    AppliedDecisionKind.Restricted,
+                    evaluationTime,
+                    memberSid,
+                    "coms.game.other",
+                    externalDenyPresent: false),
+                PolicyHealth.Healthy,
+                evaluationTime,
+                Freshness);
+
+            Assert.AreEqual(DisplayState.Restricted, matching.DisplayState);
+            Assert.AreEqual("OBSERVED_RESTRICTED", matching.ExplanationCode);
+            Assert.AreEqual(DisplayState.Degraded, wrongMember.DisplayState);
+            Assert.AreEqual("MEMBER_SCOPE_MISMATCH", wrongMember.ExplanationCode);
+            Assert.AreEqual(DisplayState.Degraded, wrongApp.DisplayState);
+            Assert.AreEqual("APP_SCOPE_MISMATCH", wrongApp.ExplanationCode);
         }
 
         [TestMethod]

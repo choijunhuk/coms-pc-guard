@@ -189,6 +189,33 @@ namespace Guard.Core.Tests.Policies
         }
 
         [TestMethod]
+        public void Evaluate_GrantDrivenTransitions_AreReturnedAsUtc()
+        {
+            DateTimeOffset issuedAt = new(2026, 9, 14, 9, 15, 0, TimeSpan.FromHours(9));
+            DateTimeOffset expiresAt = new(2026, 9, 14, 9, 45, 0, TimeSpan.FromHours(9));
+            PolicyDefinition policy = RestrictedPolicy() with
+            {
+                TemporaryGrants =
+                [
+                    Grant(
+                        "kst-grant",
+                        "member-a",
+                        "app-x",
+                        issuedAtUtc: issuedAt,
+                        expiresAtUtc: expiresAt),
+                ],
+            };
+
+            PolicyDecision beforeIssuance = Evaluate(policy, nowUtc: issuedAt.AddTicks(-1));
+            PolicyDecision atIssuance = Evaluate(policy, nowUtc: issuedAt);
+
+            Assert.AreEqual(new DateTimeOffset(2026, 9, 14, 0, 15, 0, TimeSpan.Zero), beforeIssuance.NextTransition);
+            Assert.AreEqual(TimeSpan.Zero, beforeIssuance.NextTransition?.Offset);
+            Assert.AreEqual(new DateTimeOffset(2026, 9, 14, 0, 45, 0, TimeSpan.Zero), atIssuance.NextTransition);
+            Assert.AreEqual(TimeSpan.Zero, atIssuance.NextTransition?.Offset);
+        }
+
+        [TestMethod]
         public void Evaluate_AuditOnlyWeeklyRestriction_RetainsScheduleMetadata()
         {
             PolicyDefinition enforced = RestrictedPolicy();

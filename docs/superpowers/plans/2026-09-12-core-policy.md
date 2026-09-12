@@ -19,7 +19,7 @@
 - Policy timezone is injected as `TimeZoneInfo`; tests use `Korea Standard Time` and never depend on the host timezone.
 - Time intervals are start-inclusive and end-exclusive. Weekly schedules support multiple windows and overnight windows.
 - Date overrides replace the weekly schedule for that local calendar date, including suppression of an overnight weekly tail from the previous day.
-- Priority is maintenance/recovery → emergency restriction → applicable trusted temporary grant → date override → weekly schedule → unregistered app allowed.
+- Priority is unregistered app allowed → maintenance → emergency → trusted matching grant → date/weekly schedule → audit transform.
 - Audit-only is an enforcement mode applied after the priority decision: any restriction becomes `AuditOnly` while retaining the underlying `ReasonCode` and matched rules. Maintenance and allow decisions remain allowed.
 - Temporary grants use absolute UTC issuance/expiry plus explicit trust state. Suspicious/revoked/expired grants never apply; service-level monotonic-time handling is outside this Core plan.
 - Inputs are validated; empty identifiers, non-positive versions, duplicate rule/grant IDs, invalid intervals, or expiry not after issuance fail explicitly.
@@ -55,7 +55,7 @@
 - Produces: `ScheduleEvaluator.Evaluate(PolicyDefinition policy, DateTimeOffset nowUtc) -> ScheduleEvaluation` for later date/overnight behavior.
 - Produces: immutable policy/request/decision contracts consumed by Tasks 2–4.
 
-- [ ] **Step 1: Write the first failing weekly-boundary tests**
+- [x] **Step 1: Write the first failing weekly-boundary tests**
 
 The production changes these tests catch are: an unregistered app being restricted, an inclusive/exclusive boundary shifted by one tick, a host-timezone leak, or a missing policy version/reason.
 
@@ -71,7 +71,7 @@ public void Evaluate_DefaultWindow_UsesStartInclusiveEndExclusive(...)
 
 Also test that an unregistered app at 09:00 KST returns `Allowed`, `UnregisteredApp`, an empty matched-rule list, `NextTransition == null`, and the input policy version.
 
-- [ ] **Step 2: Run RED and record the expected missing-type failures**
+- [x] **Step 2: Run RED and record the expected missing-type failures**
 
 Run:
 
@@ -81,7 +81,7 @@ Run:
 
 Expected: compilation fails because the policy types and evaluator do not exist. A typo/import failure does not count; the error must name the intended missing production contracts.
 
-- [ ] **Step 3: Implement only the contracts and same-day weekly evaluation**
+- [x] **Step 3: Implement only the contracts and same-day weekly evaluation**
 
 Required public shapes:
 
@@ -130,7 +130,7 @@ public sealed class PolicyEvaluator
 
 The default test fixture contains seven weekly rules, one per day, with the exact window `[09:00, 18:00)` and stable IDs `weekly-mon` through `weekly-sun`.
 
-- [ ] **Step 4: Run GREEN and the full portable gate**
+- [x] **Step 4: Run GREEN and the full portable gate**
 
 Run the focused test, then:
 
@@ -142,7 +142,7 @@ Run the focused test, then:
 
 Expected: all Task 1 tests pass, build has zero warnings/errors, output is pristine.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ```bash
 git add src/Guard.Core tests/Guard.Core.Tests
@@ -169,7 +169,7 @@ Include TDD and platform limits in Lore trailers.
 - Consumes: Task 1 `RestrictionWindow`, `WeeklyRestrictionRule`, and `ScheduleEvaluator`.
 - Produces: date-aware `ScheduleEvaluation(IsRestricted, MatchedRuleIds, NextTransition)` used unchanged by Task 3.
 
-- [ ] **Step 1: Write failing calendar tests**
+- [x] **Step 1: Write failing calendar tests**
 
 Each test names a break: ignoring the previous day's overnight tail, merging multiple windows incorrectly, treating an override as additive, or computing the wrong next transition.
 
@@ -183,11 +183,11 @@ Tuesday date override 14:00–16:00: 10:00 allowed, 14:00 restricted, 16:00 allo
 Overlapping active weekly windows: matched IDs are unique and ordinal-sorted.
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run only `ScheduleEvaluatorCalendarTests`; expected failures must be the unimplemented overnight/date behavior, not malformed fixtures.
 
-- [ ] **Step 3: Implement effective-local-date evaluation**
+- [x] **Step 3: Implement effective-local-date evaluation**
 
 Required date contract:
 
@@ -202,11 +202,11 @@ Add `IReadOnlyList<DateOverrideRule> DateOverrides { get; init; } = [];` to `Pol
 
 Compute `NextTransition` by enumerating effective schedule boundaries in UTC, selecting the first boundary strictly after `nowUtc` where the evaluated restriction boolean changes. Include the current date, at least the next eight local dates, and explicit future override boundaries that occur before the next repeating weekly transition. Do not return a boundary where overlapping rules leave the decision unchanged.
 
-- [ ] **Step 4: Run GREEN and regression gate**
+- [x] **Step 4: Run GREEN and regression gate**
 
 Run the focused calendar tests, all Core tests, format, and Release build. Expected: all pass with zero warnings/errors.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 ```bash
 git add src/Guard.Core/Schedules tests/Guard.Core.Tests/Schedules tests/Guard.Core.Tests/TestData
@@ -231,7 +231,7 @@ git commit -m "feat(policy): honor overnight and date-specific schedules"
 - Consumes: Task 2 schedule result.
 - Produces: complete Core priority decision with scoped grants and audit-only projection.
 
-- [ ] **Step 1: Write failing priority tests**
+- [x] **Step 1: Write failing priority tests**
 
 The tests catch priority reversal, cross-member/app leakage, grant extension, and audit mode silently enforcing.
 
@@ -249,11 +249,11 @@ AuditOnly transforms a weekly or emergency restriction to AuditOnly but retains 
 The complete evaluator with seven weekly rules, one date override, and four grants stays at or below 5 ms p95 over 10,000 calls after a 1,000-call warmup.
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run only `PolicyEvaluatorPriorityTests`; record the expected missing grant/priority failures.
 
-- [ ] **Step 3: Implement validated grant matching and exact priority**
+- [x] **Step 3: Implement validated grant matching and exact priority**
 
 Required shapes:
 
@@ -294,11 +294,11 @@ audit-only transforms only a Restricted decision into AuditOnly
 
 The unregistered-app rule remains before emergency because the product restricts registered games, not arbitrary programs. This is an explicit clarification of the approved priority list's final “unregistered apps allowed” boundary.
 
-- [ ] **Step 4: Run GREEN and regression gate**
+- [x] **Step 4: Run GREEN and regression gate**
 
 Run focused priority tests, all Core tests, format, and Release build. Expected: all pass, zero warnings/errors.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add src/Guard.Core/Policies tests/Guard.Core.Tests/Policies
@@ -324,7 +324,7 @@ git commit -m "feat(policy): make exceptions obey the approved priority"
 - Consumes: Task 3 `PolicyDecision` as Desired state.
 - Produces: `PolicyStatusProjector.Project(...) -> PolicyStatus` for future Admin/Notifier consumers.
 
-- [ ] **Step 1: Write failing status-projection tests**
+- [x] **Step 1: Write failing status-projection tests**
 
 The tests catch the dangerous bug where a scheduled restriction or successful command is shown as enforced without a matching fresh OS observation.
 
@@ -341,11 +341,11 @@ Desired AuditOnly + Healthy → AUDIT_ONLY without claiming OS restriction.
 Observation exactly at freshness limit is fresh; one tick later is stale.
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run only `PolicyStatusProjectorTests`; expected compilation failures name the missing status contracts.
 
-- [ ] **Step 3: Implement the projection**
+- [x] **Step 3: Implement the projection**
 
 Required public entry point:
 
@@ -363,11 +363,11 @@ public sealed class PolicyStatusProjector
 
 `AppliedObservation` includes policy version, applied decision, observed UTC timestamp, MemberSid, AppId, external-Deny flag, and optional error code. Validate positive freshness and non-future observation. `PolicyStatus` carries display state, desired, applied, health, and a stable explanation code; UI text is not part of Core.
 
-- [ ] **Step 4: Run GREEN and regression gate**
+- [x] **Step 4: Run GREEN and regression gate**
 
 Run focused status tests, all Core tests, format, and Release build. Expected: all pass, zero warnings/errors.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add src/Guard.Core/Status tests/Guard.Core.Tests/Status

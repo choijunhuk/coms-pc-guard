@@ -29,6 +29,34 @@ namespace Guard.Core.Tests.Identity
         }
 
         [TestMethod]
+        public void Construct_WindowsIdentityFields_RejectWildcardCharacters()
+        {
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(publisher: "CN=Game*"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(product: "Game?"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: "game*.exe"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PublisherApplicationEvidence(SignatureTrust.Trusted, "CN=Game*", "Game", "game.exe", new Version(1, 0, 0, 0)));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PublisherApplicationEvidence(SignatureTrust.Trusted, "CN=Games", "Game?", "game.exe", new Version(1, 0, 0, 0)));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PublisherApplicationEvidence(SignatureTrust.Trusted, "CN=Games", "Game", "game*.exe", new Version(1, 0, 0, 0)));
+
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Package(publisherId: "CN=Game*"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Package(packageFamilyName: "Games?.Game_123"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Package(applicationUserModelId: "Games.Game!*"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PackagedApplicationEvidence(PackageVerificationTrust.Verified, "CN=Game*", "Games.Game_123", "Games.Game!App"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PackagedApplicationEvidence(PackageVerificationTrust.Verified, "CN=Games", "Games?.Game_123", "Games.Game!App"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PackagedApplicationEvidence(PackageVerificationTrust.Verified, "CN=Games", "Games.Game_123", "Games.Game!*"));
+        }
+
+        [TestMethod]
+        public void Construct_GenericApplicationText_AllowsWildcardCharacters()
+        {
+            RegisteredApplication application = new("game*", "Game?", [Publisher(identityId: "publisher*")]);
+
+            Assert.AreEqual("game*", application.AppId);
+            Assert.AreEqual("Game?", application.DisplayName);
+            Assert.AreEqual("publisher*", application.ApprovedIdentities[0].IdentityId);
+        }
+
+        [TestMethod]
         public void Construct_PublisherIdentity_RejectsPathLikeBinaryNames()
         {
             _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: @"games\game.exe"));

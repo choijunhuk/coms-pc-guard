@@ -16,11 +16,11 @@ namespace Guard.Core.Tests.Identity
             RegisteredApplication application = Registered(Publisher(minimumVersion: new Version(1, 2, 3, 4), maximumVersion: new Version(2, 3, 4, 5)));
             Assert.IsTrue(ApplicationIdentityMatcher.Match(application, PublisherEvidence(version: new Version(1, 2, 3, 4))).IsMatch);
             Assert.IsTrue(ApplicationIdentityMatcher.Match(application, PublisherEvidence(version: new Version(2, 3, 4, 5))).IsMatch);
-            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(publisher: "CN=Other")).IsMatch);
-            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(product: "Other")).IsMatch);
-            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(binary: "other.exe")).IsMatch);
-            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(trust: SignatureTrust.Missing)).IsMatch);
-            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(trust: SignatureTrust.Untrusted)).IsMatch);
+            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(publisher: "CN=Other", version: new Version(1, 2, 3, 4))).IsMatch);
+            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(product: "Other", version: new Version(1, 2, 3, 4))).IsMatch);
+            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(binary: "other.exe", version: new Version(1, 2, 3, 4))).IsMatch);
+            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(trust: SignatureTrust.Missing, version: new Version(1, 2, 3, 4))).IsMatch);
+            Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(trust: SignatureTrust.Untrusted, version: new Version(1, 2, 3, 4))).IsMatch);
             Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(version: new Version(1, 2, 3, 3))).IsMatch);
             Assert.IsFalse(ApplicationIdentityMatcher.Match(application, PublisherEvidence(version: new Version(2, 3, 4, 6))).IsMatch);
         }

@@ -11,8 +11,8 @@ namespace Guard.Core.Identity
             Version maximumVersion)
             : base(identityId)
         {
-            Publisher = ApplicationIdentityValidation.RequiredText(publisher, nameof(publisher));
-            Product = ApplicationIdentityValidation.RequiredText(product, nameof(product));
+            Publisher = ApplicationIdentityValidation.WindowsIdentityText(publisher, nameof(publisher));
+            Product = ApplicationIdentityValidation.WindowsIdentityText(product, nameof(product));
             Binary = ApplicationIdentityValidation.BinaryName(binary, nameof(binary));
             MinimumVersion = ApplicationIdentityValidation.FourPartVersion(minimumVersion, nameof(minimumVersion));
             MaximumVersion = ApplicationIdentityValidation.FourPartVersion(maximumVersion, nameof(maximumVersion));

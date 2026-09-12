@@ -11,9 +11,9 @@ namespace Guard.Core.Identity
 
         public SignatureTrust Trust { get; } = ApplicationIdentityValidation.DefinedEnum(trust, nameof(trust));
 
-        public string Publisher { get; } = ApplicationIdentityValidation.RequiredText(publisher, nameof(publisher));
+        public string Publisher { get; } = ApplicationIdentityValidation.WindowsIdentityText(publisher, nameof(publisher));
 
-        public string Product { get; } = ApplicationIdentityValidation.RequiredText(product, nameof(product));
+        public string Product { get; } = ApplicationIdentityValidation.WindowsIdentityText(product, nameof(product));
 
         public string Binary { get; } = ApplicationIdentityValidation.BinaryName(binary, nameof(binary));
 

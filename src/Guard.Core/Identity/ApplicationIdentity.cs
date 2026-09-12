@@ -33,10 +33,18 @@ namespace Guard.Core.Identity
 
         internal static string BinaryName(string value, string parameterName)
         {
-            string binary = RequiredText(value, parameterName);
+            string binary = WindowsIdentityText(value, parameterName);
             return binary.Contains('/') || binary.Contains('\\') || binary.Contains(':') || binary is "." or ".."
                 ? throw new ArgumentException("A leaf binary file name is required.", parameterName)
                 : binary;
+        }
+
+        internal static string WindowsIdentityText(string value, string parameterName)
+        {
+            string text = RequiredText(value, parameterName);
+            return text.Contains('*') || text.Contains('?')
+                ? throw new ArgumentException("Wildcard characters are not permitted in Windows identity text.", parameterName)
+                : text;
         }
 
         internal static Version FourPartVersion(Version value, string parameterName)

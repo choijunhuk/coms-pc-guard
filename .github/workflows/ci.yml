@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.401
+          cache: true
+      - run: dotnet restore ComsPcGuard.sln --locked-mode
+      - run: dotnet format ComsPcGuard.sln --verify-no-changes --no-restore
+      - run: dotnet build ComsPcGuard.sln -c Release --no-restore
+      - run: dotnet test ComsPcGuard.sln -c Release --no-build --no-restore --logger "console;verbosity=normal"
+
+  windows-compile:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.401
+          cache: true
+      - run: dotnet restore ComsPcGuard.sln --locked-mode
+      - run: dotnet format ComsPcGuard.sln --verify-no-changes --no-restore
+      - run: dotnet build ComsPcGuard.sln -c Release --no-restore
+      - run: dotnet test ComsPcGuard.sln -c Release --no-build --no-restore --logger "console;verbosity=normal"

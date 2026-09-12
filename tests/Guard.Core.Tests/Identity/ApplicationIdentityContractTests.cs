@@ -33,6 +33,25 @@ namespace Guard.Core.Tests.Identity
         {
             _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: @"games\game.exe"));
             _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: "games/game.exe"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: "C:game.exe"));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => Publisher(binary: "game.exe:stream"));
+        }
+
+        [TestMethod]
+        public void Construct_PublisherEvidence_RejectsColonContainingBinaryNames()
+        {
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PublisherApplicationEvidence(
+                SignatureTrust.Trusted,
+                "CN=Games",
+                "Game",
+                "C:game.exe",
+                new Version(1, 0, 0, 0)));
+            _ = Assert.ThrowsExactly<ArgumentException>(() => new PublisherApplicationEvidence(
+                SignatureTrust.Trusted,
+                "CN=Games",
+                "Game",
+                "game.exe:stream",
+                new Version(1, 0, 0, 0)));
         }
 
         [TestMethod]

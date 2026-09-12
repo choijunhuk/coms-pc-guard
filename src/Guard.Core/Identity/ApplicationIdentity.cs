@@ -34,7 +34,7 @@ namespace Guard.Core.Identity
         internal static string BinaryName(string value, string parameterName)
         {
             string binary = RequiredText(value, parameterName);
-            return binary.Contains('/') || binary.Contains('\\') || binary is "." or ".."
+            return binary.Contains('/') || binary.Contains('\\') || binary.Contains(':') || binary is "." or ".."
                 ? throw new ArgumentException("A leaf binary file name is required.", parameterName)
                 : binary;
         }

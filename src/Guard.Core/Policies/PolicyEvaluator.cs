@@ -17,7 +17,9 @@ namespace Guard.Core.Policies
                     PolicyReasonCode.UnregisteredApp,
                     [],
                     null,
-                    policy.Version);
+                    policy.Version,
+                    request.MemberSid,
+                    request.AppId);
             }
 
             if (request.MaintenanceMode)
@@ -27,7 +29,9 @@ namespace Guard.Core.Policies
                     PolicyReasonCode.MaintenanceMode,
                     [],
                     null,
-                    policy.Version);
+                    policy.Version,
+                    request.MemberSid,
+                    request.AppId);
             }
 
             if (policy.EmergencyRestriction)
@@ -39,7 +43,9 @@ namespace Guard.Core.Policies
                         PolicyReasonCode.EmergencyRestriction,
                         [],
                         null,
-                        policy.Version));
+                        policy.Version,
+                        request.MemberSid,
+                        request.AppId));
             }
 
             TemporaryGrant[] scopeMatchingGrants =
@@ -74,7 +80,9 @@ namespace Guard.Core.Policies
                     PolicyReasonCode.TemporaryGrant,
                     [.. matchingGrants.Select(grant => grant.GrantId)],
                     nextTransition,
-                    policy.Version);
+                    policy.Version,
+                    request.MemberSid,
+                    request.AppId);
             }
 
             PolicyDecision decision = schedule.IsRestricted
@@ -85,13 +93,17 @@ namespace Guard.Core.Policies
                         : PolicyReasonCode.WeeklySchedule,
                     schedule.MatchedRuleIds,
                     nextTransition,
-                    policy.Version)
+                    policy.Version,
+                    request.MemberSid,
+                    request.AppId)
                 : new PolicyDecision(
                     PolicyDecisionKind.Allowed,
                     PolicyReasonCode.OutsideRestrictedSchedule,
                     schedule.MatchedRuleIds,
                     nextTransition,
-                    policy.Version);
+                    policy.Version,
+                    request.MemberSid,
+                    request.AppId);
             return ProjectAuditOnly(policy, decision);
         }
 #pragma warning restore CA1822
@@ -184,7 +196,9 @@ namespace Guard.Core.Policies
                     decision.ReasonCode,
                     decision.MatchedRuleIds,
                     decision.NextTransition,
-                    decision.PolicyVersion)
+                    decision.PolicyVersion,
+                    decision.MemberSid,
+                    decision.AppId)
                 : decision;
         }
     }

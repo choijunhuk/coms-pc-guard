@@ -1,33 +1,35 @@
 # Test report
 
-## Environment inventory
+## Environment and matrix
 
 - Date: 2026-09-12 (Asia/Seoul)
-- Development host: macOS 26.6 arm64
-- Repository-local SDK: .NET 10.0.401
-- Isolated Windows VM: `BLOCKED_WINDOWS_VM`
-- WiX: eligibility confirmed for non-revenue use; explicit `wix7` EULA acceptance remains pending in issue #3; not downloaded or invoked
+- Host: macOS 26.6 arm64
+- SDK: repository-local .NET 10.0.401 (exact)
+- Matrix: locked restore, format verification, Release build, full Release test, `TZ=UTC` full Release test, and `git diff --check`
+- Result: all gates pass; Release build has 0 warnings and 0 errors; lock files unchanged
+- Windows VM: `BLOCKED_WINDOWS_VM`
+- WiX: eligible for non-revenue use; explicit `wix7` EULA acceptance remains pending in issue #3; not downloaded or invoked
 
-## Core policy evidence
+## Fresh local totals
 
-Environment: macOS 26.6 arm64, repository-local .NET SDK 10.0.401, policy timezone supplied by tests as Korea Standard Time. The full locked portable gate used restore `--locked-mode`, format verification, Release build, full Release tests, and `git diff --check`.
+| Suite | Default timezone | `TZ=UTC` |
+| --- | ---: | ---: |
+| `Guard.Core.Tests` | 63/63 passed | 63/63 passed |
+| `Guard.Service.Tests` | 120/120 passed | 120/120 passed |
+| **Total** | **183/183 passed** | **183/183 passed** |
 
-- Default timezone full test: 61 passed, 0 failed. Performance output: `PolicyEvaluator active-grant p95: 0.054209 ms`; `PolicyEvaluator schedule p95: 0.023417 ms`.
-- `TZ=UTC` full test: 61 passed, 0 failed. Performance output: `PolicyEvaluator active-grant p95: 0.055084 ms`; `PolicyEvaluator schedule p95: 0.022584 ms`.
-- Release build: 0 warnings, 0 errors.
-- Format verification and diff check: passed.
+Core performance tests observed active-grant and schedule p95 below the `<= 5 ms` contract in both runs. Service coverage includes real temporary SQLite initialization/schema, transactional artifact/attempt/observation state, validation and capability boundaries, cancellation-pending behavior, operation-gate busy behavior, observe-first recovery, stable action identities, and last-good restore.
 
-This is `PASS` for portable Core policy behavior and the measured <= 5 ms performance contract. Core PASS is not enforcement PASS: AppLocker, service, ACL, installer, session, recovery, and native Windows behavior remain `BLOCKED_WINDOWS_VM`.
+## Hosted Core history and boundary
 
-## Bootstrap commands
+Core PR #4 is merged. Hosted run `34691377342` initially failed at `dotnet format` in the Windows compile job because a CRLF checkout triggered the EOL check. The `.gitattributes` fix recovered the gate; hosted run `34692272375` is the clean final run. Hosted/macOS results prove portable build and behavior only. They do not prove Application Identity, AppLocker, Windows service registration, ACL/session behavior, installer, or native recovery.
 
-The initial bootstrap history included a zero-test `NOT_RUN_PRODUCT_BEHAVIOR` state before the Core policy implementation. That historical state is superseded by the current Core evidence above: the default and `TZ=UTC` full gates each pass 61/61 tests.
+## Classification
 
 | Evidence | Classification |
 | --- | --- |
-| Portable configuration restore/build/format | `PASS` |
-| Core policy behavior and performance | `PASS` (61/61; p95 <= 5 ms) |
-| AppLocker/service/ACL/installer/recovery evidence | `BLOCKED_WINDOWS_VM` |
-| WiX eligibility / EULA | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |
-
-A hosted runner or macOS build is not acceptance evidence for Windows enforcement.
+| Locked portable restore/format/Release build | `PASS` |
+| Core policy behavior/performance | `PASS` (63/63 per run) |
+| Guard.Service SQLite/reconciliation behavior | `PASS` (120/120 per run) |
+| Windows adapter/service/AppLocker/ACL/installer/native recovery | `BLOCKED_WINDOWS_VM` |
+| WiX eligibility/EULA | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |

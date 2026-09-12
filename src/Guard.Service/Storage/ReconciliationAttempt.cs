@@ -26,7 +26,7 @@ namespace Guard.Service.Storage
                 PolicyArtifact.ValidateUtc(completedAtUtc.Value, nameof(completedAtUtc));
             }
 
-            if (applyReportedAtUtc < preparedAtUtc || completedAtUtc < preparedAtUtc)
+            if (applyReportedAtUtc < preparedAtUtc || completedAtUtc < preparedAtUtc || completedAtUtc < applyReportedAtUtc)
             {
                 throw new ArgumentException("Attempt timestamps are out of order.");
             }

@@ -309,7 +309,7 @@ namespace Guard.Service.Storage
             }
             internal Task<List<PolicyArtifact>> Artifacts()
             {
-                return Query("SELECT * FROM policy_artifacts", r => new PolicyArtifact(r.GetInt64(0), r.GetString(1), r.GetString(2), (EnforcementProtectionLevel)r.GetInt32(3), (OwnedPolicyState)r.GetInt32(4), ParseTime(r.GetString(5)), (PolicyArtifactState)r.GetInt32(6)));
+                return Query("SELECT * FROM policy_artifacts", r => new PolicyArtifact(r.GetInt64(0), r.GetString(1), r.GetString(2), (EnforcementProtectionLevel)ReadInteger(r, 3, 3), (OwnedPolicyState)ReadInteger(r, 4, 1), ParseTime(r.GetString(5)), (PolicyArtifactState)ReadInteger(r, 6, 1)));
             }
 
             internal async Task<List<ReconciliationAttempt>> Attempts()
@@ -337,7 +337,7 @@ namespace Guard.Service.Storage
                         throw new ArgumentException("Partial restore identity.");
                     }
 
-                    ReconciliationAttempt attempt = new(id, r.GetInt64(1), r.GetString(2), ParseTime(r.GetString(8)), (ReconciliationPhase)r.GetInt32(3), restore, NullableTime(r, 9), NullableTime(r, 10), r.IsDBNull(11) ? null : r.GetString(11));
+                    ReconciliationAttempt attempt = new(id, r.GetInt64(1), r.GetString(2), ParseTime(r.GetString(8)), (ReconciliationPhase)ReadInteger(r, 3, 7), restore, NullableTime(r, 9), NullableTime(r, 10), r.IsDBNull(11) ? null : r.GetString(11));
                     return attempt.DesiredActionIdentity.ActionId != r.GetString(4)
                         ? throw new ArgumentException("Substituted desired identity.")
                         : !artifacts.Any(p => p.PolicyVersion == attempt.PolicyVersion && p.Sha256Hex == attempt.Sha256Hex) || (restore is not null && !artifacts.Any(p => p.PolicyVersion == restore.PolicyVersion && p.Sha256Hex == restore.Sha256Hex))
@@ -351,13 +351,9 @@ namespace Guard.Service.Storage
                 List<PolicyArtifact> artifacts = await Artifacts().ConfigureAwait(false);
                 return await Query("SELECT * FROM applied_observations ORDER BY rowid DESC", r =>
                 {
-                    int flag = r.GetInt32(6);
-                    if (flag is not (0 or 1))
-                    {
-                        throw new ArgumentException("Invalid boolean.");
-                    }
+                    int flag = ReadInteger(r, 6, 1);
 
-                    EffectivePolicyObservation observation = new(Guid.ParseExact(r.GetString(0), "D"), r.GetInt64(1), r.GetString(2), ParseTime(r.GetString(3)), (EnforcementProtectionLevel)r.GetInt32(4), (OwnedPolicyState)r.GetInt32(5), flag == 1, r.GetString(7));
+                    EffectivePolicyObservation observation = new(Guid.ParseExact(r.GetString(0), "D"), r.GetInt64(1), r.GetString(2), ParseTime(r.GetString(3)), (EnforcementProtectionLevel)ReadInteger(r, 4, 3), (OwnedPolicyState)ReadInteger(r, 5, 2), flag == 1, r.GetString(7));
                     return !artifacts.Any(p => p.PolicyVersion == observation.PolicyVersion && p.Sha256Hex == observation.Sha256Hex)
                         ? throw new ArgumentException("Missing observation artifact.")
                         : observation;
@@ -373,6 +369,14 @@ namespace Guard.Service.Storage
                 }
                 await Execute("INSERT INTO applied_observations VALUES($id,$v,$h,$t,$p,$o,$d,$e)", ("$id", observation.ObservationId.ToString("D")), ("$v", observation.PolicyVersion), ("$h", observation.Sha256Hex), ("$t", Stamp(observation.ObservedAtUtc)), ("$p", (int)observation.ProtectionLevel), ("$o", (int)observation.ObservedOwnedState), ("$d", observation.ExternalDenyPresent ? 1 : 0), ("$e", observation.EvidenceJson)).ConfigureAwait(false);
             }
+            private static int ReadInteger(SqliteDataReader reader, int ordinal, int maximum)
+            {
+                // GetValue preserves the SQLite storage class; GetInt32 would truncate REAL values.
+                return reader.GetValue(ordinal) is not long value || value < 0 || value > maximum
+                    ? throw new InvalidDataException("Persisted enum or boolean must be an in-range SQLite INTEGER.")
+                    : checked((int)value);
+            }
+
             private static DateTimeOffset? NullableTime(SqliteDataReader reader, int ordinal)
             {
                 return reader.IsDBNull(ordinal) ? null : ParseTime(reader.GetString(ordinal));

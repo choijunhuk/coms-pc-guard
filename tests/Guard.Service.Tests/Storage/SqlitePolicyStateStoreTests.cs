@@ -427,6 +427,54 @@ namespace Guard.Service.Tests.Storage
             }
         }
 
+        [TestMethod]
+        [DataRow("policy_artifacts", "state")]
+        [DataRow("policy_artifacts", "required_protection")]
+        [DataRow("policy_artifacts", "expected_owned_state")]
+        [DataRow("reconciliation_attempts", "phase")]
+        [DataRow("applied_observations", "protection_level")]
+        [DataRow("applied_observations", "observed_owned_state")]
+        [DataRow("applied_observations", "external_deny_present")]
+        public async Task FractionalDurableIntegerIsRejectedWithoutTruncation(string table, string column)
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqlitePolicyStateStore store = Store(database);
+            await store.InitializeAsync(CancellationToken.None);
+            if (table == "reconciliation_attempts")
+            {
+                await store.SaveCandidateAndBeginAttemptAsync(Artifact(), Attempt(Artifact()), CancellationToken.None);
+            }
+            else
+            {
+                await Commit(store, Artifact());
+            }
+
+            string fractional = column == "required_protection" ? "1.5" : "0.5";
+            await Corrupt(database, $"UPDATE {table} SET {column}={fractional}");
+            Assert.AreEqual(1L, await Count(database, $"SELECT count(*) FROM {table} WHERE typeof({column})='real'"));
+            Func<Task> read = table switch
+            {
+                "policy_artifacts" => () => store.GetArtifactAsync(1, CancellationToken.None),
+                "reconciliation_attempts" => () => store.GetPendingAttemptAsync(CancellationToken.None),
+                _ => () => store.GetLastGoodObservationAsync(CancellationToken.None),
+            };
+            _ = await Assert.ThrowsExactlyAsync<InvalidDataException>(read);
+        }
+
+        [TestMethod]
+        public async Task TerminalCompletionBeforeApplyReportIsRejectedOnRead()
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqlitePolicyStateStore store = Store(database);
+            await store.InitializeAsync(CancellationToken.None);
+            ReconciliationAttempt attempt = Attempt(Artifact());
+            await store.SaveCandidateAndBeginAttemptAsync(Artifact(), attempt, CancellationToken.None);
+            await store.MarkApplyReportedAsync(attempt.AttemptId, Now.AddSeconds(10), CancellationToken.None);
+            await store.MarkFailedAsync(attempt.AttemptId, "NoChange", Now.AddSeconds(10), CancellationToken.None);
+            await Corrupt(database, "UPDATE reconciliation_attempts SET completed_utc='2026-09-12T00:00:05.0000000+00:00'");
+            _ = await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.GetPendingAttemptAsync(CancellationToken.None));
+        }
+
         private static async Task<long> Count(TemporarySqliteDatabase database, string sql)
         {
             await using SqliteConnection connection = await new SqliteConnectionFactory(new SqliteDatabaseOptions(database.DatabasePath)).OpenAsync(CancellationToken.None);

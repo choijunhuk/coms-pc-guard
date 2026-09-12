@@ -23,6 +23,7 @@ namespace Guard.Core.Policies
             ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(
                 validatedPolicy.TimeZone,
                 validatedPolicy.WeeklyRules,
+                validatedPolicy.DateOverrides,
                 request.NowUtc);
             return schedule.IsRestricted
                 ? new PolicyDecision(

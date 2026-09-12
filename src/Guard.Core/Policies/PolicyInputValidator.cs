@@ -2,7 +2,10 @@ using Guard.Core.Schedules;
 
 namespace Guard.Core.Policies
 {
-    internal sealed record ValidatedPolicy(TimeZoneInfo TimeZone, IReadOnlyList<WeeklyRestrictionRule> WeeklyRules);
+    internal sealed record ValidatedPolicy(
+        TimeZoneInfo TimeZone,
+        IReadOnlyList<WeeklyRestrictionRule> WeeklyRules,
+        IReadOnlyList<DateOverrideRule> DateOverrides);
 
     internal static class PolicyInputValidator
     {
@@ -17,6 +20,7 @@ namespace Guard.Core.Policies
 
             ArgumentNullException.ThrowIfNull(policy.TimeZone);
             ArgumentNullException.ThrowIfNull(policy.WeeklyRules);
+            ArgumentNullException.ThrowIfNull(policy.DateOverrides);
 
             HashSet<string> uniqueRuleIds = new(StringComparer.Ordinal);
             List<WeeklyRestrictionRule> weeklyRules = new(policy.WeeklyRules.Count);
@@ -47,7 +51,42 @@ namespace Guard.Core.Policies
                 weeklyRules.Add(rule);
             }
 
-            return new ValidatedPolicy(policy.TimeZone, Array.AsReadOnly(weeklyRules.ToArray()));
+            List<DateOverrideRule> dateOverrides = new(policy.DateOverrides.Count);
+            foreach (DateOverrideRule dateOverride in policy.DateOverrides)
+            {
+                if (dateOverride is null)
+                {
+                    throw new ArgumentException("Date overrides cannot contain null values.", nameof(policy));
+                }
+
+                if (string.IsNullOrWhiteSpace(dateOverride.RuleId))
+                {
+                    throw new ArgumentException("Date override rule IDs are required.", nameof(policy));
+                }
+
+                ArgumentNullException.ThrowIfNull(dateOverride.RestrictedWindows);
+                if (dateOverride.RestrictedWindows.Any(window => window is null))
+                {
+                    throw new ArgumentException("Date override windows cannot contain null values.", nameof(policy));
+                }
+
+                if (dateOverride.RestrictedWindows.Any(window => window.SpansMidnight))
+                {
+                    throw new ArgumentException("Date override windows cannot span midnight.", nameof(policy));
+                }
+
+                if (!uniqueRuleIds.Add(dateOverride.RuleId))
+                {
+                    throw new ArgumentException("Schedule rule IDs must be unique.", nameof(policy));
+                }
+
+                dateOverrides.Add(dateOverride);
+            }
+
+            return new ValidatedPolicy(
+                policy.TimeZone,
+                Array.AsReadOnly(weeklyRules.ToArray()),
+                Array.AsReadOnly(dateOverrides.ToArray()));
         }
 
         internal static void Validate(PolicyEvaluationRequest request)

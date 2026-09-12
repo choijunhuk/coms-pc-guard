@@ -13,6 +13,7 @@ namespace Guard.Core.Tests.TestData
             {
                 Version = DefaultPolicyVersion,
                 TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time"),
+                DateOverrides = [],
                 WeeklyRules =
                 [
                     new WeeklyRestrictionRule("weekly-mon", DayOfWeek.Monday, new RestrictionWindow(new TimeOnly(9, 0), new TimeOnly(18, 0))),

@@ -68,6 +68,16 @@ namespace Guard.Service.Storage
         }, cancellationToken);
         }
 
+        public Task MarkDesiredRetryReportedAsync(Guid attemptId, DateTimeOffset reportedAtUtc, CancellationToken cancellationToken)
+        {
+            return Change(attemptId, async (s, a) =>
+            {
+                Require(IsDesired(a));
+                CheckTime(a, reportedAtUtc);
+                await s.Execute("UPDATE reconciliation_attempts SET phase=1,apply_reported_utc=$t WHERE attempt_id=$id", ("$t", Stamp(reportedAtUtc)), Id(a)).ConfigureAwait(false);
+            }, cancellationToken);
+        }
+
         public Task MarkDesiredUncertainAsync(Guid attemptId, string errorCode, CancellationToken cancellationToken)
         {
             return Change(attemptId, async (s, a) =>

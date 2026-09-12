@@ -38,6 +38,82 @@ namespace Guard.Service.Tests.Storage
         }
 
         [TestMethod]
+        [DataRow(ReconciliationPhase.Prepared)]
+        [DataRow(ReconciliationPhase.ApplyReported)]
+        [DataRow(ReconciliationPhase.DesiredUncertain)]
+        [DataRow(ReconciliationPhase.RecoveryBlocked)]
+        public async Task DesiredRetryCanReportAgainWithoutReplacingIdentity(ReconciliationPhase phase)
+        {
+            await using TemporarySqliteDatabase db = new();
+            SqlitePolicyStateStore store = Store(db);
+            await store.InitializeAsync(default);
+            ReconciliationAttempt attempt = Attempt(Artifact());
+            await store.SaveCandidateAndBeginAttemptAsync(Artifact(), attempt, default);
+            if (phase == ReconciliationPhase.ApplyReported)
+            {
+                await store.MarkApplyReportedAsync(attempt.AttemptId, Now, default);
+            }
+
+            if (phase == ReconciliationPhase.DesiredUncertain)
+            {
+                await store.MarkDesiredUncertainAsync(attempt.AttemptId, "Interrupted", default);
+            }
+
+            if (phase == ReconciliationPhase.RecoveryBlocked)
+            {
+                await store.MarkRecoveryBlockedAsync(attempt.AttemptId, "Conflict", default);
+            }
+
+            await Store(db).MarkDesiredRetryReportedAsync(attempt.AttemptId, Now.AddSeconds(1), default);
+            ReconciliationAttempt reported = (await Store(db).GetPendingAttemptAsync(default))!;
+            Assert.AreEqual(ReconciliationPhase.ApplyReported, reported.Phase);
+            Assert.AreEqual(attempt.DesiredActionIdentity, reported.DesiredActionIdentity);
+            Assert.AreEqual(Now.AddSeconds(1), reported.ApplyReportedAtUtc);
+        }
+
+        [TestMethod]
+        [DataRow(ReconciliationPhase.RestorePrepared)]
+        [DataRow(ReconciliationPhase.RestoreApplyReported)]
+        [DataRow(ReconciliationPhase.RecoveryBlocked)]
+        [DataRow(ReconciliationPhase.Committed)]
+        [DataRow(ReconciliationPhase.Failed)]
+        public async Task DesiredRetryCannotReverseRestoreOrTerminalState(ReconciliationPhase phase)
+        {
+            await using TemporarySqliteDatabase db = new();
+            SqlitePolicyStateStore store = Store(db);
+            await store.InitializeAsync(default);
+            ReconciliationAttempt good = Attempt(Artifact());
+            await store.SaveCandidateAndBeginAttemptAsync(Artifact(), good, default);
+            await store.CommitObservedSuccessAsync(good.AttemptId, Observation(Artifact()), Now, default);
+            ReconciliationAttempt attempt = Attempt(Artifact(2));
+            await store.SaveCandidateAndBeginAttemptAsync(Artifact(2), attempt, default);
+            if (phase == ReconciliationPhase.Committed)
+            {
+                await store.CommitObservedSuccessAsync(attempt.AttemptId, Observation(Artifact(2)), Now, default);
+            }
+            else if (phase == ReconciliationPhase.Failed)
+            {
+                await store.MarkFailedAsync(attempt.AttemptId, "Rejected", Now, default);
+            }
+            else
+            {
+                await store.PrepareRestoreAsync(attempt.AttemptId, (await store.GetLastGoodArtifactAsync(default))!, "Restore", default);
+                if (phase == ReconciliationPhase.RestoreApplyReported)
+                {
+                    await store.MarkRestoreApplyReportedAsync(attempt.AttemptId, Now, default);
+                }
+
+                if (phase == ReconciliationPhase.RecoveryBlocked)
+                {
+                    await store.MarkRecoveryBlockedAsync(attempt.AttemptId, "Conflict", default);
+                }
+            }
+            ReconciliationAttempt? before = await store.GetPendingAttemptAsync(default);
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => Store(db).MarkDesiredRetryReportedAsync(attempt.AttemptId, Now, default));
+            Assert.AreEqual(before, await Store(db).GetPendingAttemptAsync(default));
+        }
+
+        [TestMethod]
         public void ArtifactRejectsHashSubstitutionAndMalformedInputs()
         {
             foreach (string hash in new[] { new string('0', 64), Hash(Json).ToUpperInvariant(), "", "abc" })

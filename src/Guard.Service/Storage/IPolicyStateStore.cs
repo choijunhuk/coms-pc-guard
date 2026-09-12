@@ -5,6 +5,8 @@ namespace Guard.Service.Storage
         Task InitializeAsync(CancellationToken cancellationToken);
         Task SaveCandidateAndBeginAttemptAsync(PolicyArtifact artifact, ReconciliationAttempt attempt, CancellationToken cancellationToken);
         Task MarkApplyReportedAsync(Guid attemptId, DateTimeOffset reportedAtUtc, CancellationToken cancellationToken);
+        // Recovery reports a physical retry without changing the durable desired identity.
+        Task MarkDesiredRetryReportedAsync(Guid attemptId, DateTimeOffset reportedAtUtc, CancellationToken cancellationToken);
         Task MarkDesiredUncertainAsync(Guid attemptId, string errorCode, CancellationToken cancellationToken);
         Task PrepareRestoreAsync(Guid attemptId, PolicyArtifact lastGood, string errorCode, CancellationToken cancellationToken);
         Task MarkRestoreApplyReportedAsync(Guid attemptId, DateTimeOffset reportedAtUtc, CancellationToken cancellationToken);

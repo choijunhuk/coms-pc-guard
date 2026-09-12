@@ -97,6 +97,58 @@ namespace Guard.Service.Tests.Storage
         }
 
         [TestMethod]
+        public async Task InitializeAsync_WhenDesiredActionUniquenessIsRemoved_RejectsWithoutModifyingSchema()
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqliteConnectionFactory factory = CreateFactory(database);
+            await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None);
+            await using SqliteConnection connection = await factory.OpenAsync(CancellationToken.None);
+            await ReplaceReconciliationAttemptsAsync(
+                connection,
+                "desired_action_id TEXT NOT NULL UNIQUE",
+                "desired_action_id TEXT NOT NULL CHECK(1)");
+            string before = await SchemaDefinitionAsync(connection);
+
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                async () => await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None));
+
+            Assert.AreEqual(before, await SchemaDefinitionAsync(connection));
+        }
+
+        [TestMethod]
+        public async Task InitializeAsync_WhenPolicyArtifactIdentityUniquenessIsRemoved_RejectsWithoutModifyingSchema()
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqliteConnectionFactory factory = CreateFactory(database);
+            await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None);
+            await using SqliteConnection connection = await factory.OpenAsync(CancellationToken.None);
+            await ReplacePolicyArtifactsAsync(connection, "UNIQUE(policy_version, sha256_hex)", "CHECK(1)");
+            string before = await SchemaDefinitionAsync(connection);
+
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                async () => await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None));
+
+            Assert.AreEqual(before, await SchemaDefinitionAsync(connection));
+        }
+
+        [TestMethod]
+        public async Task InitializeAsync_WhenRequiredIndexPredicateIsIneffective_RejectsWithoutModifyingIt()
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqliteConnectionFactory factory = CreateFactory(database);
+            await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None);
+            await using SqliteConnection connection = await factory.OpenAsync(CancellationToken.None);
+            await ExecuteAsync(connection, "DROP INDEX ux_reconciliation_attempts_one_nonterminal;");
+            await ExecuteAsync(connection, "CREATE UNIQUE INDEX ux_reconciliation_attempts_one_nonterminal ON reconciliation_attempts((1)) WHERE phase BETWEEN 0 AND 5 AND 0;");
+            string before = await ObjectSqlAsync(connection, "index", "ux_reconciliation_attempts_one_nonterminal");
+
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                async () => await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None));
+
+            Assert.AreEqual(before, await ObjectSqlAsync(connection, "index", "ux_reconciliation_attempts_one_nonterminal"));
+        }
+
+        [TestMethod]
         public async Task OpenAsync_AppliesForeignKeysAndBusyTimeout()
         {
             await using TemporarySqliteDatabase database = new();
@@ -195,6 +247,40 @@ namespace Guard.Service.Tests.Storage
             await ExecuteAsync(connection, "CREATE TABLE reconciliation_attempts(attempt_id TEXT PRIMARY KEY, policy_version INTEGER NOT NULL, sha256_hex TEXT NOT NULL, phase INTEGER NOT NULL, desired_action_id TEXT NOT NULL, restore_action_id TEXT NULL, restore_policy_version INTEGER NULL, restore_sha256_hex TEXT NULL, prepared_utc TEXT NOT NULL, apply_reported_utc TEXT NULL, completed_utc TEXT NULL, error_code TEXT NULL);");
         }
 
+        private static async Task ReplacePolicyArtifactsAsync(
+            SqliteConnection connection,
+            string oldValue,
+            string newValue)
+        {
+            string observationsSql = await ObjectSqlAsync(connection, "table", "applied_observations");
+            string attemptsSql = await ObjectSqlAsync(connection, "table", "reconciliation_attempts");
+            string attemptsIndexSql = await ObjectSqlAsync(connection, "index", "ux_reconciliation_attempts_one_nonterminal");
+            string lastGoodIndexSql = await ObjectSqlAsync(connection, "index", "ux_policy_artifacts_one_last_good");
+            string policyArtifactsSql = await ObjectSqlAsync(connection, "table", "policy_artifacts");
+            await ExecuteAsync(connection, "PRAGMA foreign_keys = OFF;");
+            await ExecuteAsync(connection, "DROP TABLE applied_observations;");
+            await ExecuteAsync(connection, "DROP TABLE reconciliation_attempts;");
+            await ExecuteAsync(connection, "DROP TABLE policy_artifacts;");
+            await ExecuteAsync(connection, policyArtifactsSql.Replace(oldValue, newValue, StringComparison.Ordinal));
+            await ExecuteAsync(connection, observationsSql);
+            await ExecuteAsync(connection, attemptsSql);
+            await ExecuteAsync(connection, attemptsIndexSql);
+            await ExecuteAsync(connection, lastGoodIndexSql);
+            await ExecuteAsync(connection, "PRAGMA foreign_keys = ON;");
+        }
+
+        private static async Task ReplaceReconciliationAttemptsAsync(
+            SqliteConnection connection,
+            string oldValue,
+            string newValue)
+        {
+            string attemptsSql = await ObjectSqlAsync(connection, "table", "reconciliation_attempts");
+            string attemptsIndexSql = await ObjectSqlAsync(connection, "index", "ux_reconciliation_attempts_one_nonterminal");
+            await ExecuteAsync(connection, "DROP TABLE reconciliation_attempts;");
+            await ExecuteAsync(connection, attemptsSql.Replace(oldValue, newValue, StringComparison.Ordinal));
+            await ExecuteAsync(connection, attemptsIndexSql);
+        }
+
         private static async Task<string> DatabaseFilePathAsync(SqliteConnection connection)
         {
             await using SqliteCommand command = connection.CreateCommand();
@@ -209,6 +295,15 @@ namespace Guard.Service.Tests.Storage
             return await ScalarStringAsync(
                 connection,
                 "SELECT group_concat(sql, '\n') FROM sqlite_master WHERE type = 'table' ORDER BY name;");
+        }
+
+        private static async Task<string> ObjectSqlAsync(SqliteConnection connection, string objectType, string objectName)
+        {
+            await using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT sql FROM sqlite_master WHERE type = $type AND name = $name;";
+            _ = command.Parameters.AddWithValue("$type", objectType);
+            _ = command.Parameters.AddWithValue("$name", objectName);
+            return Convert.ToString(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
         }
 
         private static async Task<long> ScalarInt64Async(SqliteConnection connection, string commandText)

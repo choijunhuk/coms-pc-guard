@@ -11,7 +11,14 @@ namespace Guard.Service.Storage
         );
         """;
 
-        internal const string CreateVersionOneTables = """
+        internal const string SchemaMigrationsDefinition = """
+        CREATE TABLE schema_migrations(
+            version INTEGER PRIMARY KEY,
+            applied_utc TEXT NOT NULL
+        );
+        """;
+
+        internal const string PolicyArtifactsDefinition = """
         CREATE TABLE policy_artifacts(
             policy_version INTEGER PRIMARY KEY,
             canonical_json TEXT NOT NULL,
@@ -22,7 +29,9 @@ namespace Guard.Service.Storage
             state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 1),
             UNIQUE(policy_version, sha256_hex)
         );
+        """;
 
+        internal const string AppliedObservationsDefinition = """
         CREATE TABLE applied_observations(
             observation_id TEXT PRIMARY KEY,
             policy_version INTEGER NOT NULL,
@@ -35,7 +44,9 @@ namespace Guard.Service.Storage
             FOREIGN KEY(policy_version, sha256_hex)
                 REFERENCES policy_artifacts(policy_version, sha256_hex)
         );
+        """;
 
+        internal const string ReconciliationAttemptsDefinition = """
         CREATE TABLE reconciliation_attempts(
             attempt_id TEXT PRIMARY KEY,
             policy_version INTEGER NOT NULL,
@@ -54,14 +65,25 @@ namespace Guard.Service.Storage
             FOREIGN KEY(restore_policy_version, restore_sha256_hex)
                 REFERENCES policy_artifacts(policy_version, sha256_hex)
         );
+        """;
 
+        internal const string NonterminalAttemptIndexDefinition = """
         CREATE UNIQUE INDEX ux_reconciliation_attempts_one_nonterminal
             ON reconciliation_attempts((1))
-            WHERE phase BETWEEN 0 AND 5;
+        WHERE phase BETWEEN 0 AND 5;
+        """;
 
+        internal const string LastGoodArtifactIndexDefinition = """
         CREATE UNIQUE INDEX ux_policy_artifacts_one_last_good
             ON policy_artifacts(state)
-            WHERE state = 1;
+        WHERE state = 1;
         """;
+
+        internal const string CreateVersionOneTables =
+            PolicyArtifactsDefinition
+            + AppliedObservationsDefinition
+            + ReconciliationAttemptsDefinition
+            + NonterminalAttemptIndexDefinition
+            + LastGoodArtifactIndexDefinition;
     }
 }

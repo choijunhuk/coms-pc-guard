@@ -29,3 +29,9 @@ AppLocker, Application Identity, ACL, session, service, and installer behavior r
 Portable identity contracts use AND semantics within each publisher/package identity and OR only across separately approved identities. Discovery metadata cannot approve an application; verifier-derived proposals always require Owner confirmation. Revalidation reviews the complete approved set, cache invalidation includes all reliable file and registration stamps, and process targeting requires PID + creation UTC + matching identity immediately before a future native action.
 
 PR #5 is merged; hosted run `34701889964` is the clean evidence run. The 2026-09-13 physical Windows inventory is read-only and not an authorized VM: Windows 11 Home build 26200, .NET 9.0.301 only, AppIDSvc Manual/Stopped, AppLocker cmdlet present, and zero local/effective rules. The SID is intentionally not stored. Windows evidence-provider and enforcement work remains blocked.
+
+## DR-008 — Preview-only AppLocker compiler and XML
+
+Task 1/2 provide a portable preview contract, not policy mutation. Only verified Publisher identities produce EXE Publisher conditions; hash/package identities block with explicit missing-native-provenance diagnostics. The compiler trusts pre-evaluated decisions, uses explicit `Enabled`/`AuditOnly`, preserves product-owned deltas, and never targets Owner, Administrators, or Everyone for Deny. XML is deterministic and standalone, not a GPO/CSP merge plan.
+
+Application identity PR #6 merged hosted run `34708235735`; the AppLocker preview is local on this branch pending its own PR/CI. Local full matrix is Core 117/117 and Guard.Service 148/148 (265/265) in both default and `TZ=UTC` runs. Official AppLocker CSP, rule/condition, Get/Set cmdlet, and AppIDSvc references were checked 2026-09-13. Native apply, AppIDSvc changes, SID token proof, GPO/CSP coexistence, blocking, reboot, rollback, and process action remain `BLOCKED_WINDOWS_VM`.

@@ -11,7 +11,7 @@ The portable Core policy, application identity, and `Guard.Service` persistence/
 - `PLAN.md` — approved scope and acceptance evidence.
 - `src/Guard.Core` — OS-independent policy, schedule, and user/app status projection.
 - `src/Guard.Service` — portable SQLite state store and reconciliation coordinator; no Windows APIs.
-- `tests/Guard.Core.Tests` — 110 policy and application-identity tests.
+- `tests/Guard.Core.Tests` — 117 policy and application-identity tests.
 - `tests/Guard.Service.Tests` — 125 storage, reconciliation, and recovery tests using real temporary SQLite and test-only scripted adapters.
 - Root governance/evidence documents — decisions, status, security, operations, sources, and reports.
 

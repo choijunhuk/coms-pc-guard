@@ -96,5 +96,17 @@ namespace Guard.WindowsPoc.Tests.Native
             InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() => verifier.Verify(WindowsScriptTrustVerifier.ScriptPath));
             Assert.IsFalse(failure.Message.Contains("sensitive", StringComparison.Ordinal));
         }
+
+        [TestMethod]
+        public void CiToolTrustAcceptsProtectedWindowsOwnerButOnlyAtFixedSystemPath()
+        {
+            const string installer = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+            WindowsScriptTrustVerifier verifier = new(path => GoodPath(path) with { Owner = installer }, () => GoodFile, () => new HeldFile(), systemExecutable: true);
+            using IScriptTrustLease lease = verifier.Verify(@"C:\Windows\System32\CiTool.exe");
+            lease.Revalidate();
+            _ = Assert.Throws<InvalidOperationException>(() => verifier.Verify(@"C:\temp\CiTool.exe"));
+            WindowsScriptTrustVerifier script = new(path => GoodPath(path) with { Owner = installer }, () => GoodFile, () => new HeldFile());
+            _ = Assert.Throws<InvalidOperationException>(() => script.Verify(WindowsScriptTrustVerifier.ScriptPath));
+        }
     }
 }

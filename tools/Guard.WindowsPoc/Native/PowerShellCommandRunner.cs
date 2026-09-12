@@ -13,20 +13,33 @@ namespace Guard.WindowsPoc.Native
     {
         private const string Root = @"C:\ProgramData\ComsPcGuardPoc";
         private readonly IScriptTrustVerifier _trust;
-        private readonly Func<ProcessStartInfo, CancellationToken, Task<string>> _execute;
+        private readonly Func<ProcessStartInfo, Action, CancellationToken, Task<string>> _execute;
         private readonly TimeSpan _timeout;
-        public PowerShellCommandRunner() : this(new WindowsScriptTrustVerifier(), ExecuteAsync) { }
+        public PowerShellCommandRunner()
+        {
+            _trust = new WindowsScriptTrustVerifier();
+            _execute = ExecuteAsync;
+            _timeout = TimeSpan.FromSeconds(30);
+        }
         internal PowerShellCommandRunner(IScriptTrustVerifier trust, Func<ProcessStartInfo, CancellationToken, Task<string>> execute, TimeSpan? timeout = null)
         {
             _trust = trust;
-            _execute = execute;
+            _execute = (info, _, token) => execute(info, token);
             _timeout = timeout ?? TimeSpan.FromSeconds(30);
             if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(30)) { throw new ArgumentOutOfRangeException(nameof(timeout)); }
         }
 
-        private static async Task<string> ExecuteAsync(ProcessStartInfo info, CancellationToken cancellationToken)
+        private static async Task<string> ExecuteAsync(ProcessStartInfo info, Action revalidate, CancellationToken cancellationToken)
         {
             if (!OperatingSystem.IsWindows()) { throw new InvalidOperationException("Native inventory unavailable."); }
+            using IScriptTrustLease providerTrust = WindowsScriptTrustVerifier.VerifyCiTool();
+            ProcessStartInfo provider = CreateCiToolStartInfo();
+            providerTrust.Revalidate();
+            return await ExecuteInventoryProcessesAsync(provider, info, revalidate, cancellationToken).ConfigureAwait(false);
+        }
+
+        internal static async Task<string> ExecuteProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken, string? input = null)
+        {
             using Process process = new() { StartInfo = info };
             cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) { throw new InvalidOperationException("Native inventory unavailable."); }
@@ -34,7 +47,12 @@ namespace Guard.WindowsPoc.Native
             {
                 Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken);
                 Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken);
-                _ = await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+                if (info.RedirectStandardInput)
+                {
+                    if (input is not null) { await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false); }
+                    process.StandardInput.Close();
+                }
+                _ = await Task.WhenAll(stdout, stderr).WaitAsync(cancellationToken).ConfigureAwait(false);
                 await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
                 return process.ExitCode != 0 || stderr.Result.Length != 0
                     ? throw new InvalidOperationException("Native inventory unavailable.")
@@ -42,8 +60,56 @@ namespace Guard.WindowsPoc.Native
             }
             finally
             {
-                if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
+                // CiTool and PowerShell are separately owned direct children, never parent/descendant.
+                // Observe each lifetime and close its streams even after the process has already exited.
+                try
+                {
+                    await CleanupProcessAsync(process).ConfigureAwait(false);
+                }
+                finally
+                {
+                    process.StandardOutput.Dispose();
+                    process.StandardError.Dispose();
+                    if (info.RedirectStandardInput) { process.StandardInput.Dispose(); }
+                }
             }
+        }
+
+        private static async Task CleanupProcessAsync(Process process)
+        {
+            using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(2));
+            try
+            {
+                if (!process.HasExited) { process.Kill(entireProcessTree: true); }
+                await process.WaitForExitAsync(cleanup.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw new InvalidOperationException("Native process cleanup unavailable."); }
+        }
+
+        internal static async Task<string> ExecuteInventoryProcessesAsync(ProcessStartInfo provider, ProcessStartInfo inventory, Action revalidate, CancellationToken cancellationToken)
+        {
+            string evidence = await ExecuteProcessAsync(provider, cancellationToken).ConfigureAwait(false);
+            if (evidence.Length > 500_000) { throw new InvalidOperationException("Native inventory unavailable."); }
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(evidence);
+                RejectDuplicates(document.RootElement);
+                if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("Policies", out JsonElement policies) || policies.ValueKind != JsonValueKind.Array)
+                { throw new InvalidOperationException("Native inventory unavailable."); }
+            }
+            catch (JsonException) { throw new InvalidOperationException("Native inventory unavailable."); }
+            cancellationToken.ThrowIfCancellationRequested();
+            revalidate();
+            return await ExecuteProcessAsync(inventory, cancellationToken, evidence).ConfigureAwait(false);
+        }
+
+        internal static ProcessStartInfo CreateCiToolStartInfo()
+        {
+            ProcessStartInfo info = new(WindowsScriptTrustVerifier.CiToolPath)
+            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true, WorkingDirectory = @"C:\Windows\System32" };
+            info.ArgumentList.Add("-lp");
+            info.ArgumentList.Add("-json");
+            return info;
         }
 
         internal static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken cancellationToken)
@@ -113,6 +179,7 @@ namespace Guard.WindowsPoc.Native
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = true,
                 CreateNoWindow = true,
                 WorkingDirectory = Root + @"\Scripts"
             };
@@ -138,7 +205,7 @@ namespace Guard.WindowsPoc.Native
             ProcessStartInfo info = CreateStartInfo(WindowsCommand.Capture);
             timeout.Token.ThrowIfCancellationRequested();
             lease.Revalidate();
-            string json = await _execute(info, timeout.Token).ConfigureAwait(false);
+            string json = await _execute(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
             AppLockerNativeSnapshot snapshot = ParseSnapshot(json);
             return !snapshot.IsComplete ? throw new InvalidOperationException("Native inventory unavailable.") : new(snapshot);
         }

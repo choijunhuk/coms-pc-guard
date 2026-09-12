@@ -29,6 +29,9 @@ function Read-PolicyXml([string] $Text) {
 }
 
 try {
+    # Drain the bounded provider input before potentially slow CIM queries.
+    $ciText = [Console]::In.ReadToEnd()
+    if ($ciText.Length -gt 500000) { throw 'Unavailable' }
     $local = [string](Get-AppLockerPolicy -Local -Xml -ErrorAction Stop)
     $effective = [string](Get-AppLockerPolicy -Effective -Xml -ErrorAction Stop)
     $localDocument = Read-PolicyXml $local
@@ -84,9 +87,8 @@ try {
     $wdacPresence = 0
     $ciSucceeded = $false
     try {
-        # Fixed native command, read-only list. All policies (including platform policies) count.
-        $ciText = (& 'C:\Windows\System32\CiTool.exe' -lp -json 2>$null | Out-String)
-        if ($LASTEXITCODE -ne 0 -or $ciText.Length -gt 500000) { throw 'Unavailable' }
+        # The C# runner owns CiTool -lp -json, waits for its exit, then supplies bounded JSON.
+        # This script never launches external children, so CiTool cannot outlive PowerShell.
         $ci = ConvertFrom-Json -InputObject $ciText -ErrorAction Stop
         if ($null -eq $ci -or $ci.Policies -isnot [array]) { throw 'Unavailable' }
         foreach ($policy in $ci.Policies) {

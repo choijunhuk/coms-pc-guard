@@ -11,6 +11,85 @@ namespace Guard.WindowsPoc.Tests.Native
         {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"r1","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
         """;
 
+        private static System.Diagnostics.ProcessStartInfo Shell(string command, params string[] arguments)
+        {
+            System.Diagnostics.ProcessStartInfo info = new("/bin/sh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
+            info.ArgumentList.Add("-c");
+            info.ArgumentList.Add(command);
+            info.ArgumentList.Add("process-test");
+            foreach (string argument in arguments) { info.ArgumentList.Add(argument); }
+            return info;
+        }
+
+        [TestMethod]
+        public async Task RealProviderMustFinishBeforeInventoryReceivesJsonOnStdin()
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            string marker = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                System.Diagnostics.ProcessStartInfo provider = Shell("printf done > \"$1\"; printf '{\"Policies\":[]}'", marker);
+                System.Diagnostics.ProcessStartInfo inventory = Shell("test -f \"$1\" || exit 7; cat", marker);
+                using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(2));
+                string json = await PowerShellCommandRunner.ExecuteInventoryProcessesAsync(provider, inventory, () => Assert.IsTrue(File.Exists(marker)), timeout.Token);
+                Assert.AreEqual(/*lang=json,strict*/ "{\"Policies\":[]}", json);
+            }
+            finally { File.Delete(marker); }
+        }
+
+        [TestMethod]
+        [DataRow(true)]
+        [DataRow(false)]
+        public async Task RealProcessTimeoutKillsOwnedProviderOrInventory(bool providerTimesOut)
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            string pidFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            string inventoryMarker = pidFile + ".inventory";
+            try
+            {
+                System.Diagnostics.ProcessStartInfo pending = Shell("printf '%s' \"$$\" > \"$1\"; exec sleep 30", pidFile);
+                System.Diagnostics.ProcessStartInfo provider = providerTimesOut ? pending : Shell("printf '{\"Policies\":[]}'");
+                System.Diagnostics.ProcessStartInfo inventory = providerTimesOut ? Shell("printf started > \"$1\"; printf '{}'", inventoryMarker) : pending;
+                using CancellationTokenSource timeout = new(TimeSpan.FromMilliseconds(300));
+                System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+                _ = await Assert.ThrowsAsync<OperationCanceledException>(() => PowerShellCommandRunner.ExecuteInventoryProcessesAsync(provider, inventory, static () => { }, timeout.Token));
+                Assert.IsLessThan(TimeSpan.FromSeconds(3), elapsed.Elapsed);
+                Assert.IsFalse(File.Exists(inventoryMarker));
+                Assert.IsTrue(File.Exists(pidFile));
+                int pid = int.Parse(await File.ReadAllTextAsync(pidFile), System.Globalization.CultureInfo.InvariantCulture);
+                try { using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(pid); Assert.IsTrue(process.HasExited); }
+                catch (ArgumentException) { /* Reaped processes are no longer addressable. */ }
+            }
+            finally { File.Delete(pidFile); File.Delete(inventoryMarker); }
+        }
+
+        [TestMethod]
+        public async Task RealFailedOrMalformedProviderNeverStartsInventory()
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            string marker = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                foreach (string command in new[] { "printf '{\"Policies\":[]}'; exit 9", "printf '{}'", "printf 'not-json'", "printf '{\"Policies\":[],\"Policies\":[]}'" })
+                {
+                    using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(2));
+                    _ = await Assert.ThrowsAsync<InvalidOperationException>(() => PowerShellCommandRunner.ExecuteInventoryProcessesAsync(Shell(command), Shell("printf started > \"$1\"", marker), static () => { }, timeout.Token));
+                    Assert.IsFalse(File.Exists(marker));
+                }
+            }
+            finally { File.Delete(marker); }
+        }
+
+        [TestMethod]
+        public void CiToolCommandIsFixedReadOnlyAndNeverUsesShellInterpolation()
+        {
+            System.Diagnostics.ProcessStartInfo info = PowerShellCommandRunner.CreateCiToolStartInfo();
+            Assert.AreEqual(@"C:\Windows\System32\CiTool.exe", info.FileName);
+            Assert.IsFalse(info.UseShellExecute);
+            string[] expected = ["-lp", "-json"];
+            CollectionAssert.AreEqual(expected, info.ArgumentList.ToArray());
+        }
+
         private sealed class Trust : IScriptTrustVerifier, IScriptTrustLease
         {
             public bool Reject { get; set; }

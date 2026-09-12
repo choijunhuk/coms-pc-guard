@@ -4,7 +4,7 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-Phase A is approved. This repository currently contains only a reproducible portable bootstrap: `Guard.Core` is intentionally empty and no Windows enforcement, installer, service, UI, or recovery implementation exists. Windows validation remains required before any enforcement claim.
+Phase A is approved and the portable Core policy slice is locally complete pending PR/CI. `Guard.Core` evaluates deterministic schedule, priority, temporary-grant, audit-only, and status-projection decisions. No Windows enforcement, installer, service, UI, or recovery implementation exists; Windows validation remains required before any enforcement claim.
 
 ## Repository map
 
@@ -31,6 +31,7 @@ Then run:
 ./.dotnet/dotnet format ComsPcGuard.sln --verify-no-changes --no-restore
 ./.dotnet/dotnet build ComsPcGuard.sln -c Release --no-restore
 ./.dotnet/dotnet test ComsPcGuard.sln -c Release --no-build --no-restore
+TZ=UTC ./.dotnet/dotnet test ComsPcGuard.sln -c Release --no-build --no-restore
 ```
 
-macOS and hosted-runner results prove only portable configuration and Core behavior. They do not prove Windows service, AppLocker, ACL, installer, session, or recovery behavior.
+The current Core performance contract is <= 5 ms p95 for active-grant and schedule evaluation (observed on macOS: 0.054209 ms and 0.023417 ms respectively). macOS and hosted-runner results prove only portable configuration and Core behavior. They do not prove Windows service, AppLocker, ACL, installer, session, or recovery behavior.

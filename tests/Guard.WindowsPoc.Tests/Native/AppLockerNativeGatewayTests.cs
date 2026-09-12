@@ -77,6 +77,17 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task SyntheticCompleteLookingSnapshotCannotPassNativeGateway()
+        {
+            AppLockerNativeSnapshot original = PolicyMutationGuardTests.Snapshot;
+            AppLockerNativeSnapshot synthetic = new(original.CapturedAtUtc, original.Revision, original.Inventory,
+                original.LocalPolicyXml, original.RestorationEligible, original.AppIdServiceRunning, original.AppIdServiceAutomatic)
+            { EffectivePolicyXml = original.EffectivePolicyXml, Platform = original.Platform };
+            ControlledRunner runner = new((_, _) => Task.FromResult(new WindowsCommandResult(synthetic)));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => Portable(runner).CaptureAsync());
+        }
+
+        [TestMethod]
         public async Task IncompleteInjectedSnapshotBecomesControlledUnavailable()
         {
             ControlledRunner runner = new((_, _) => Task.FromResult(new WindowsCommandResult(PolicyMutationGuardTests.Snapshot with { Inventory = null! })));

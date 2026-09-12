@@ -1,7 +1,6 @@
 using Guard.Core.Identity;
 using Guard.Core.Policies;
 using Guard.Service.AppLocker;
-using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Safety;
 
@@ -23,8 +22,16 @@ namespace Guard.WindowsPoc.Tests.Safety
         internal const string Member = "S-1-5-21-1-2-3-1001";
         internal static AppLockerPolicyPreview Preview => new AppLockerPreviewCompiler().Compile(new(Owner, [Member], [new("fixture", [new PublisherApplicationIdentity("fixture", "CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0))])], [new(PolicyDecisionKind.AuditOnly, PolicyReasonCode.WeeklySchedule, [], null, 1, Member, "fixture")], new(Now, "r1", 0, 0, 0, 0, true, true, []), Now, 1, AppLockerEnforcementMode.AuditOnly));
         internal static string Xml => new AppLockerPolicyXmlWriter().Write(Preview);
-        internal static AppLockerNativeSnapshot Snapshot => new(Now, "r1", new(PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent), "<AppLockerPolicy Version=\"1\" />", true, true, true)
-        { EffectivePolicyXml = "<AppLockerPolicy Version=\"1\" />", Platform = new(true, 26100, "Observed") };
+        // Test-only fixture factory exercises the real transport parser and hash validation.
+        internal static AppLockerNativeSnapshot Snapshot
+        {
+            get
+            {
+                System.Text.Json.Nodes.JsonObject input = System.Text.Json.Nodes.JsonNode.Parse(Native.PowerShellCommandRunnerTests.Complete)!.AsObject();
+                input["RestorationEligible"] = true;
+                return PowerShellCommandRunner.ParseSnapshot(input.ToJsonString());
+            }
+        }
         internal static PolicyMutationGuard Guard => new(Preview, Owner, @"C:\ComsPcGuardPoc\Fixtures\target.exe", new string('A', 64), new FixedClock());
         internal static VmAttestationResult Attestation => VmAttestation.Evaluate(VmAttestationTests.Options, VmAttestationTests.Platform);
 

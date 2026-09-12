@@ -11,6 +11,13 @@ $VerbosePreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 
+function Get-RawLocalPolicySha256([string] $Text) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))).Replace('-', '')
+    } finally { $sha256.Dispose() }
+}
+
 function Read-PolicyXml([string] $Text) {
     if ([string]::IsNullOrWhiteSpace($Text) -or $Text.Length -gt 500000) { throw 'Unavailable' }
     $settings = [System.Xml.XmlReaderSettings]::new()
@@ -104,6 +111,7 @@ try {
         Revision = [guid]::NewGuid().ToString('N')
         Inventory = @{ Local = $localPresence; EffectiveGroupPolicy = $effectivePresence; CspMdm = $cspPresence; Wdac = $wdacPresence }
         LocalPolicyXml = $local
+        RawLocalPolicySha256 = Get-RawLocalPolicySha256 $local
         EffectivePolicyXml = $effective
         RestorationEligible = $false
         AppIdServiceRunning = $service[0].State -eq 'Running'

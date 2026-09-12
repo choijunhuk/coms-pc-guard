@@ -72,3 +72,48 @@ Remaining 5C2 work, required before any native write can be enabled:
 8. Perform authorized Windows-only acceptance separately. Native PowerShell/AppLocker, ACL/sharing, VM mutation, and SYSTEM watchdog tests are **NOT_RUN_WINDOWS_ONLY**. Public mutation/recovery remains disabled throughout this task; Task 6's protected Owner-attestation proof remains a separate prerequisite.
 
 No external review was claimed. The existing full scope was intentionally left BLOCKED, with this verified safety restriction committed as the permitted minimal slice.
+
+## Task 5C2A fix round 1/5 — require transported, validated provenance
+
+Base: `afdfedb`. Both Important findings are addressed. This section supersedes the initial slice's computed-for-every-snapshot hash and ignored incoming hash behavior; those were insufficient provenance barriers. Full Task 5C2 remains BLOCKED at the remainder above. Payload creation and all native writes remain refused.
+
+### Changes and self-review
+
+- `scripts/windows/Get-ComsPocInventory.ps1` now emits `RawLocalPolicySha256` alongside the exact `LocalPolicyXml`, using SHA-256 over UTF-8 bytes without BOM or canonicalization. The disposable hash provider is closed in `finally`. No new native command or policy mutation was added.
+- `PowerShellCommandRunner.ParseSnapshot` requires the transport field to be a nonblank string. Its internal snapshot construction checks exactly 64 ASCII hex characters and recomputes SHA-256 from the exact XML; a missing, null, nonstring, short, long, nonhex, or unequal value refuses with the existing controlled unavailable error. Valid hex is compared case-insensitively and stored uppercase. A bogus 64-character transport value is now rejected, not silently replaced.
+- `AppLockerNativeSnapshot.RawLocalPolicySha256` is nullable and get-only. The public positional constructor leaves it absent. An internal validating constructor used by the production parser sets it; native completeness requires it. JSON model deserialization cannot assign it. The explicit private record-copy constructor deliberately does not copy it, so `with` expressions cannot preserve a capture stamp after changing XML, timestamps, revisions, or other fields. No writable provenance property or caller boolean was introduced.
+- `PolicyMutationGuardTests.Snapshot` is now a test-assembly-only fixture factory that constructs complete transport JSON and passes through the production `ParseSnapshot` validation. It does not set a private capture flag or use a production bypass. This preserves the compiler/XML guard tests and the positive native gateway cases while public/synthetic construction is rejected.
+- Focused tests were added/updated in `PowerShellCommandRunnerTests.cs` and `AppLockerNativeGatewayTests.cs`; `PolicyMutationGuardTests.cs` supplies the validated portable fixture. Only these six source/test/script files plus this report changed.
+
+`IsComplete` is evidence-schema/provenance validation, not cryptographic authentication of arbitrary JSON or mutation authority. The real command runner still obtains JSON under its trusted script/process lease; the public parser alone does not authorize a write. No trusted SYSTEM provider evidence is fabricated. Copying a validated native snapshot intentionally produces an incomplete snapshot until fresh validated parsing; immutable portable journal snapshots are unchanged.
+
+The new PowerShell test discovers an already-installed `pwsh` on PATH. It parses the actual inventory script, executes only its function declarations and snapshot hashtable expression with harmless fixture inputs, then feeds the emitted JSON through the real C# parser. It never executes the top-level inventory block or any AppLocker/CIM/WindowsIdentity calls. This is executable script-expression coverage rather than source-string matching, but it is not Windows PowerShell 5.1 or native inventory acceptance. Environments without `pwsh` explicitly mark these three cases inconclusive; on this macOS run all three executed and passed with zero skips. No tool/package was installed.
+
+### Exact RED / GREEN evidence
+
+The same absolute SDK and worktree definitions above apply. New rejection tests were written before production changes.
+
+| Phase and command | Actual output/result |
+| --- | --- |
+| RED: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter 'RawProvenance\|SyntheticDeserialized\|SyntheticCompleteLooking'` (literal pipes) | Exit 1; **9 failed / 0 passed**, 188 ms. Six `MissingMalformedOrMismatchedRawProvenanceRefusesCapture` rows, `NonStringRawProvenanceRefusesCapture`, and `SyntheticCompleteLookingSnapshotCannotPassNativeGateway` reported `Expected exception of type InvalidOperationException (or derived) but no exception was thrown`. `SyntheticDeserializedAndCopiedSnapshotsCannotManufactureCaptureProvenance` failed at `Assert.IsFalse(synthetic.IsComplete)` with actual true. |
+| GREEN after model/parser/fixture edits: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter 'RawProvenance\|SyntheticDeserialized\|SyntheticCompleteLooking\|CapturedRawHash'` (literal pipes) | Exit 0; **11/11**, 190 ms, including existing exact raw spelling fixtures. |
+| RED before script edit: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter TrustedScriptSnapshotTransportsRawUtf8Hash` | Exit 1; **1 failed / 0 passed**. The actual PowerShell snapshot expression emitted no raw field: expected `635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15`, actual null. No native inventory was invoked. |
+| GREEN after script edit: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter 'TrustedScriptSnapshotTransportsRawUtf8Hash\|RawProvenance\|SyntheticDeserialized\|SyntheticCompleteLooking\|CapturedRawHash'` (literal pipes) | Exit 0; **12/12**, 688 ms. |
+| Final focused GREEN after adding alternate-spelling and Korean UTF-8 script fixtures: `dotnet test tests/Guard.WindowsPoc.Tests -c Release --no-build --no-restore --filter 'TrustedScriptSnapshotTransportsRawUtf8Hash\|RawProvenance\|SyntheticDeserialized\|SyntheticCompleteLooking\|CapturedRawHash'` (literal pipes) | Exit 0; **14/14**, zero skips, 1 second. |
+| `dotnet test tests/Guard.WindowsPoc.Tests --no-restore` | Exit 0; **102/102**, zero skips, 2 seconds. |
+| `dotnet restore ComsPcGuard.sln --locked-mode` | Exit 0; all projects current, lockfiles unchanged. |
+| `dotnet format ComsPcGuard.sln --no-restore --include tools/Guard.WindowsPoc/Native/IWindowsCommandRunner.cs tools/Guard.WindowsPoc/Native/PowerShellCommandRunner.cs tests/Guard.WindowsPoc.Tests/Native/PowerShellCommandRunnerTests.cs tests/Guard.WindowsPoc.Tests/Native/AppLockerNativeGatewayTests.cs tests/Guard.WindowsPoc.Tests/Safety/PolicyMutationGuardTests.cs` | Exit 0, no output. |
+| `dotnet build ComsPcGuard.sln -c Release --no-restore` | Exit 0; **0 warnings, 0 errors**, repository analyzers enabled. |
+| `dotnet format ComsPcGuard.sln --verify-no-changes --no-restore` | Exit 0, no output. |
+| `dotnet test ComsPcGuard.sln -c Release --no-build --no-restore` | Exit 0; Core **117**, Service **148**, PoC **102**; total **367/367**. |
+| `TZ=America/New_York dotnet test ComsPcGuard.sln -c Release --no-build --no-restore` | Exit 0; same **367/367**. |
+| `dotnet run --project tools/Guard.WindowsPoc -c Release --no-build -- inventory` | Exit **2**, no output; native capture not run. |
+| `dotnet run --project tools/Guard.WindowsPoc.Fixture -c Release --no-build -- 00000000-0000-0000-0000-000000000001` | Exit **2**, `NOT_RUN_WINDOWS_ONLY`. |
+| `dotnet run --project tools/Guard.WindowsPoc.ControlFixture -c Release --no-build -- 00000000-0000-0000-0000-000000000002` | Exit **2**, `NOT_RUN_WINDOWS_ONLY`. |
+| `git diff --check` | Exit 0. |
+
+The rejection rows cover missing property, empty string, short hash, nonhex 64-character hash, mismatched 64-character hash, overlong hash, explicit JSON null, number, and boolean. Synthetic construction, JSON round-trip, and record edits require absent provenance and incomplete status. The gateway rejects a complete-looking synthetic snapshot. The previous compiler-decision-only payload refusal regression continues to pass.
+
+The two ASCII script fixtures use the literal hashes listed in the initial report. The additional exact XML `<AppLockerPolicy Version="1"><!--한글--></AppLockerPolicy>` produces `F6430F3D8B837EC94DCDE24CB3B2964D3B99164572D0D6AD2B8AF4E11E77EB45`, independently checked with `shasum -a 256`; this protects UTF-8 behavior beyond ASCII-only inputs. Neither production parser nor helper computes the test's expected literals.
+
+No subagents/reviewers, VM/physical-host operations, native AppLocker calls, P/Invoke, or dependencies were introduced in this fix round. Native Windows acceptance remains **NOT_RUN_WINDOWS_ONLY** and full Task 5C2 remains incomplete.

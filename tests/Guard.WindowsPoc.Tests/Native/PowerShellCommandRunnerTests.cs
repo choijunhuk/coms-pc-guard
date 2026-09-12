@@ -7,8 +7,8 @@ namespace Guard.WindowsPoc.Tests.Native
     [TestClass]
     public sealed class PowerShellCommandRunnerTests
     {
-        private const string Complete = """
-        {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"r1","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
+        internal const string Complete = """
+        {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"r1","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","RawLocalPolicySha256":"635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
         """;
 
         [TestMethod]
@@ -18,11 +18,106 @@ namespace Guard.WindowsPoc.Tests.Native
         {
             JsonObject input = JsonNode.Parse(Complete)!.AsObject();
             input["LocalPolicyXml"] = xml;
-            // Untrusted output cannot supply its own provenance hash.
-            input["RawLocalPolicySha256"] = new string('F', 64);
+            input["RawLocalPolicySha256"] = expectedHash;
             AppLockerNativeSnapshot snapshot = PowerShellCommandRunner.ParseSnapshot(input.ToJsonString());
             JsonObject output = System.Text.Json.JsonSerializer.SerializeToNode(snapshot)!.AsObject();
             Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
+        }
+
+        [TestMethod]
+        [DataRow(null)]
+        [DataRow("")]
+        [DataRow("635222D6")]
+        [DataRow("G35222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15")]
+        [DataRow("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")]
+        [DataRow("635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E150")]
+        public void MissingMalformedOrMismatchedRawProvenanceRefusesCapture(string? hash)
+        {
+            JsonObject input = JsonNode.Parse(Complete)!.AsObject();
+            if (hash is null) { _ = input.Remove("RawLocalPolicySha256"); }
+            else { input["RawLocalPolicySha256"] = hash; }
+            _ = Assert.Throws<InvalidOperationException>(() => PowerShellCommandRunner.ParseSnapshot(input.ToJsonString()));
+        }
+
+        [TestMethod]
+        public void NonStringRawProvenanceRefusesCapture()
+        {
+            foreach (JsonNode? value in new JsonNode?[] { null, JsonValue.Create(42), JsonValue.Create(true) })
+            {
+                JsonObject input = JsonNode.Parse(Complete)!.AsObject();
+                input["RawLocalPolicySha256"] = value;
+                _ = Assert.Throws<InvalidOperationException>(() => PowerShellCommandRunner.ParseSnapshot(input.ToJsonString()));
+            }
+        }
+
+        [TestMethod]
+        public void SyntheticDeserializedAndCopiedSnapshotsCannotManufactureCaptureProvenance()
+        {
+            AppLockerNativeSnapshot synthetic = new(new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), "r1",
+                new(PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent),
+                "<AppLockerPolicy Version=\"1\" />", false, true, true)
+            { EffectivePolicyXml = "<AppLockerPolicy Version=\"1\" />", Platform = new(true, 26100, "Observed") };
+            Assert.IsFalse(synthetic.IsComplete);
+            Assert.IsNull(synthetic.RawLocalPolicySha256);
+            AppLockerNativeSnapshot captured = PowerShellCommandRunner.ParseSnapshot(Complete);
+            Assert.IsTrue(captured.IsComplete);
+            AppLockerNativeSnapshot decoded = System.Text.Json.JsonSerializer.Deserialize<AppLockerNativeSnapshot>(
+                System.Text.Json.JsonSerializer.Serialize(captured))!;
+            Assert.IsFalse(decoded.IsComplete);
+            Assert.IsNull(decoded.RawLocalPolicySha256);
+            foreach (AppLockerNativeSnapshot edited in new[] { captured with { Revision = "forged" },
+                captured with { LocalPolicyXml = "<AppLockerPolicy Version=\"1\"></AppLockerPolicy>" },
+                captured with { CapturedAtUtc = captured.CapturedAtUtc.AddSeconds(1) } })
+            {
+                Assert.IsFalse(edited.IsComplete);
+                Assert.IsNull(edited.RawLocalPolicySha256);
+            }
+        }
+
+        [TestMethod]
+        [DataRow("<AppLockerPolicy Version=\"1\" />", "635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15")]
+        [DataRow("<AppLockerPolicy Version=\"1\"></AppLockerPolicy>", "00C785D262C6873D62CC0FDFCC5F120D91EC687939708E3BDCB0AB136F0918C4")]
+        [DataRow("<AppLockerPolicy Version=\"1\"><!--한글--></AppLockerPolicy>", "F6430F3D8B837EC94DCDE24CB3B2964D3B99164572D0D6AD2B8AF4E11E77EB45")]
+        public async Task TrustedScriptSnapshotTransportsRawUtf8Hash(string xml, string expectedHash)
+        {
+            string executable = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
+            string? powerShell = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+                .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => Path.Combine(path, executable)).FirstOrDefault(File.Exists);
+            if (powerShell is null) { Assert.Inconclusive("PowerShell unavailable; script snapshot execution not run."); }
+            DirectoryInfo? root = new(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "ComsPcGuard.sln"))) { root = root.Parent; }
+            Assert.IsNotNull(root);
+            // Execute only function declarations and the snapshot expression with harmless inputs.
+            // The top-level inventory block (AppLocker/CIM/WindowsIdentity) is never invoked.
+            const string command = """
+                $ErrorActionPreference = 'Stop'
+                $tokens = $null; $errors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:POC_CAPTURE_SCRIPT, [ref]$tokens, [ref]$errors)
+                if ($errors.Count -ne 0) { throw 'Script parse failure' }
+                foreach ($definition in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+                    . ([scriptblock]::Create($definition.Extent.Text))
+                }
+                $local = $env:POC_LOCAL_XML; $effective = $local
+                $localPresence = 1; $effectivePresence = 1; $cspPresence = 1; $wdacPresence = 1
+                $service = @([pscustomobject]@{ State = 'Running'; StartMode = 'Auto' })
+                $systemContext = $true; $cspSucceeded = $true; $ciSucceeded = $true
+                $x64 = $true; $build = 26100; $vm = 'Observed'
+                $assignment = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$snapshot' }, $true)
+                if ($null -eq $assignment) { throw 'Snapshot unavailable' }
+                $snapshot = & ([scriptblock]::Create($assignment.Right.Extent.Text))
+                ConvertTo-Json -InputObject $snapshot -Depth 4 -Compress
+                """;
+            System.Diagnostics.ProcessStartInfo info = new(powerShell)
+            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            info.Environment["POC_CAPTURE_SCRIPT"] = Path.Combine(root.FullName, "scripts", "windows", "Get-ComsPocInventory.ps1");
+            info.Environment["POC_LOCAL_XML"] = xml;
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
+            { info.ArgumentList.Add(argument); }
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+            string json = await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
+            JsonObject output = JsonNode.Parse(json)!.AsObject();
+            Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
+            Assert.IsTrue(PowerShellCommandRunner.ParseSnapshot(json).IsComplete);
         }
 
         private static System.Diagnostics.ProcessStartInfo Shell(string command, params string[] arguments)

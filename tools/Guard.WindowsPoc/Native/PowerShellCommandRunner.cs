@@ -201,6 +201,7 @@ namespace Guard.WindowsPoc.Native
 
                 string revision = RequiredText(root, "Revision");
                 string xml = RequiredText(root, "LocalPolicyXml");
+                string rawHash = RequiredText(root, "RawLocalPolicySha256");
                 string effective = RequiredText(root, "EffectivePolicyXml");
                 ValidatePolicy(xml);
                 ValidatePolicy(effective);
@@ -213,10 +214,11 @@ namespace Guard.WindowsPoc.Native
                 bool running = RequiredBoolean(root, "AppIdServiceRunning");
                 bool automatic = RequiredBoolean(root, "AppIdServiceAutomatic");
                 _ = root.TryGetProperty("Inventory", out JsonElement inventory);
-                return new(timestamp, revision, new(Presence(inventory, "Local"), Presence(inventory, "EffectiveGroupPolicy"),
+                AppLockerNativeSnapshot snapshot = new(timestamp, revision, new(Presence(inventory, "Local"), Presence(inventory, "EffectiveGroupPolicy"),
                     ProvenTrue(root, "SystemContext") && ProvenTrue(root, "CspQuerySucceeded") ? Presence(inventory, "CspMdm") : Inventory.PolicyPresence.Unknown,
                     ProvenTrue(root, "CiToolQuerySucceeded") ? Presence(inventory, "Wdac") : Inventory.PolicyPresence.Unknown), xml, restoration, running, automatic)
                 { EffectivePolicyXml = effective, Platform = new(x64, buildNumber, vm) };
+                return new(snapshot, rawHash);
             }
             catch (JsonException)
             {

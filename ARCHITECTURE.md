@@ -30,7 +30,7 @@ The supported runtime injects one `PolicyOperationGate` per canonical database p
 
 `FileIdentityCachePolicy` invalidates verifier-evidence reuse on registration revision, canonical path, length, last-write UTC, stable file ID, or content stamp changes; path alone is insufficient and cache reuse never auto-approves. `ProcessTargetVerifier` requires PID, creation UTC, and a matching approved image identity from freshly associated process/image evidence. A future Windows adapter must repeat those checks immediately before termination; this pure policy does not close the OS race.
 
-No Windows evidence provider, signature verification API, AppLocker compiler/application, service, ACL, IPC, UI, installer, or real process termination is implemented here. Those remain `BLOCKED_WINDOWS_VM` pending an authorized isolated Windows VM.
+No Windows evidence provider, signature verification API, AppLocker application, service, ACL, IPC, UI, installer, or real process termination is implemented here. Those remain `BLOCKED_WINDOWS_VM` pending an authorized isolated Windows VM.
 
 ## AppLocker preview boundary (Task 3)
 

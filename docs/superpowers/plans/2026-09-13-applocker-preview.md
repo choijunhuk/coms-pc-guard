@@ -152,7 +152,7 @@ Stage exact docs and commit `docs(applocker): record preview-only policy evidenc
 
 - PR #6 merged hosted run: `34708235735`.
 - Fresh local matrix using repository-local SDK `/Users/choi/Desktop/project/coms-pc-guard/.dotnet/dotnet`: locked restore, format verification, Release build, default full test, `TZ=UTC` full test, and `git diff --check` all pass. Release build: 0 warnings, 0 errors; lock files unchanged.
-- Counts: Core 117/117 and Guard.Service 148/148, total 265/265 in both timezone runs. AppLocker compiler tests 20/20 and XML writer tests 7/7.
+- Counts: Core 117/117 and Guard.Service 148/148, total 265/265 in both timezone runs. Current focused AppLocker preview/XML tests: 23/23 (compiler 16, XML writer 7).
 - Contracts: compiler consumes trusted inventory and pre-evaluated `PolicyDecision`; only Publisher-backed EXE identities emit member-SID Deny rules; clean standalone inventory may add one `Allow Everyone Path *` baseline; hash/package identities are blockers. XML emits deterministic standalone `AppLockerPolicy Version="1"`, one Exe collection, explicit `Enabled`/`AuditOnly`, complete conditions, and no apply/merge/file I/O. Rule IDs use fixed-namespace SHA-256 UUIDv8 over length-prefixed logical components.
 - Requirement map: `P1-03` PASS for portable preview/compiler/XML (`AppLockerPreviewCompiler`, `AppLockerPolicyXmlWriter`, `AppLocker*`; matching compiler/XML tests); native evidence remains blocked.
 - Official sources checked 2026-09-13: AppLocker CSP, working with rules, rule condition types, Get-AppLockerPolicy, Set-AppLockerPolicy, and AppIDSvc configuration (URLs recorded in `SOURCES.md`).

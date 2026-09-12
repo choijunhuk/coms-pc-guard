@@ -4,7 +4,7 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-The portable Core policy, application identity, persistence/reconciliation, and preview-only AppLocker compiler/XML slices are complete. PR #6 is merged with hosted clean run `34708235735`; local full suites pass 265/265 in both default and `TZ=UTC` runs (Core 117, Service 148). `Guard.Service` is a class library, not an installed/running Windows Service. Native AppLocker enforcement, evidence collection, installer, UI, and recovery remain `BLOCKED_WINDOWS_VM`.
+The portable Core policy, application identity, persistence/reconciliation, and preview-only AppLocker compiler/XML slices are complete. Application identity PR #6 is merged with hosted clean run `34708235735`; the AppLocker preview is local on this branch pending its own PR/CI. Local full suites pass 265/265 in both default and `TZ=UTC` runs (Core 117, Service 148). `Guard.Service` is a class library, not an installed/running Windows Service. Native AppLocker enforcement, evidence collection, installer, UI, and recovery remain `BLOCKED_WINDOWS_VM`.
 
 ## Repository map
 

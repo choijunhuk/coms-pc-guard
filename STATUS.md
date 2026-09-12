@@ -11,7 +11,7 @@
 | Isolated Windows VM | `BLOCKED_WINDOWS_VM` |
 | WiX license eligibility | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |
 
-Task 3 fresh local evidence is 265/265 passing tests in both default and `TZ=UTC` runs: Core 117 and Guard.Service 148. Locked restore, format, Release build, and diff check pass; Release build has zero warnings/errors. Hosted PR #6 run `34708235735` is the current merged clean run.
+Task 3 fresh local evidence is 265/265 passing tests in both default and `TZ=UTC` runs: Core 117 and Guard.Service 148. Locked restore, format, Release build, and diff check pass; Release build has zero warnings/errors. Hosted PR #6 run `34708235735` is the merged application-identity evidence run; AppLocker preview remains local pending its own PR/CI.
 
 Identity semantics are explicit: AND within Publisher/PackagedApp fields, OR only across separately approved identities; discovery candidates remain Owner-confirmed proposals; updates require review unless another approved identity matches; cache keys include registration and reliable file stamps; process targeting requires PID + creation UTC + approved image identity. No native claim follows from these portable results.
 

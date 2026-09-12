@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ComsPcGuardPoc.PublisherControl</AssemblyName>
+    <Product>COMS PC Guard PoC Publisher Control</Product>
+    <Description>Harmless isolated VM same-publisher control</Description>
+    <Company>COMS VM Lab</Company>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="../Guard.WindowsPoc/Fixtures/HarmlessFixture.cs" Link="HarmlessFixture.cs" /></ItemGroup>
+</Project>

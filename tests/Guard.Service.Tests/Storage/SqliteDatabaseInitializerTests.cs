@@ -116,6 +116,25 @@ namespace Guard.Service.Tests.Storage
         }
 
         [TestMethod]
+        public async Task InitializeAsync_WhenDesiredActionTypeQuotesHideConstraints_RejectsWithoutRepair()
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqliteConnectionFactory factory = CreateFactory(database);
+            await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None);
+            await using SqliteConnection connection = await factory.OpenAsync(CancellationToken.None);
+            await ReplaceReconciliationAttemptsAsync(
+                connection,
+                "desired_action_id TEXT NOT NULL UNIQUE",
+                "desired_action_id \"TEXT NOT NULL UNIQUE\"");
+            string before = await SchemaDefinitionAsync(connection);
+
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                async () => await new SqliteDatabaseInitializer(factory).InitializeAsync(CancellationToken.None));
+
+            Assert.AreEqual(before, await SchemaDefinitionAsync(connection));
+        }
+
+        [TestMethod]
         public async Task InitializeAsync_WhenPolicyArtifactIdentityUniquenessIsRemoved_RejectsWithoutModifyingSchema()
         {
             await using TemporarySqliteDatabase database = new();

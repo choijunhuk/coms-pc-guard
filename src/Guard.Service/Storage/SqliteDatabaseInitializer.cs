@@ -95,8 +95,7 @@ namespace Guard.Service.Storage
         private static string NormalizeSql(string sql)
         {
             return new string([
-                .. sql.Where(character => !char.IsWhiteSpace(character)
-                    && character is not '"' and not '`' and not '[' and not ']' and not ';'),
+                .. sql.Where(character => !char.IsWhiteSpace(character) && character != ';'),
             ]).ToUpperInvariant();
         }
 

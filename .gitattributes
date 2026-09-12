@@ -1,0 +1,17 @@
+# Keep repository text consistent when Windows uses core.autocrlf.
+* text=auto eol=lf
+
+# Keep binary assets out of Git's text and line-ending conversion.
+*.7z binary
+*.bmp binary
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.nupkg binary
+*.pdf binary
+*.png binary
+*.rar binary
+*.tar binary
+*.webp binary
+*.zip binary

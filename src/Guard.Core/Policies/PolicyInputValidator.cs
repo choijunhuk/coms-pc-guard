@@ -5,8 +5,7 @@ namespace Guard.Core.Policies
     internal sealed record ValidatedPolicy(
         TimeZoneInfo TimeZone,
         IReadOnlyList<WeeklyRestrictionRule> WeeklyRules,
-        IReadOnlyList<DateOverrideRule> DateOverrides,
-        IReadOnlyList<TemporaryGrant> TemporaryGrants);
+        IReadOnlyList<DateOverrideRule> DateOverrides);
 
     internal static class PolicyInputValidator
     {
@@ -22,7 +21,6 @@ namespace Guard.Core.Policies
             ArgumentNullException.ThrowIfNull(policy.TimeZone);
             ArgumentNullException.ThrowIfNull(policy.WeeklyRules);
             ArgumentNullException.ThrowIfNull(policy.DateOverrides);
-            ArgumentNullException.ThrowIfNull(policy.TemporaryGrants);
 
             HashSet<string> uniqueRuleIds = new(StringComparer.Ordinal);
             List<WeeklyRestrictionRule> weeklyRules = new(policy.WeeklyRules.Count);
@@ -85,27 +83,10 @@ namespace Guard.Core.Policies
                 dateOverrides.Add(dateOverride);
             }
 
-            List<TemporaryGrant> temporaryGrants = new(policy.TemporaryGrants.Count);
-            foreach (TemporaryGrant grant in policy.TemporaryGrants)
-            {
-                if (grant is null)
-                {
-                    throw new ArgumentException("Temporary grants cannot contain null values.", nameof(policy));
-                }
-
-                if (!uniqueRuleIds.Add(grant.GrantId))
-                {
-                    throw new ArgumentException("Policy rule and grant IDs must be unique.", nameof(policy));
-                }
-
-                temporaryGrants.Add(grant);
-            }
-
             return new ValidatedPolicy(
                 policy.TimeZone,
                 Array.AsReadOnly(weeklyRules.ToArray()),
-                Array.AsReadOnly(dateOverrides.ToArray()),
-                Array.AsReadOnly(temporaryGrants.ToArray()));
+                Array.AsReadOnly(dateOverrides.ToArray()));
         }
 
         internal static void Validate(PolicyEvaluationRequest request)

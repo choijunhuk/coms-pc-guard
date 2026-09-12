@@ -39,7 +39,7 @@ namespace Guard.WindowsPoc.Safety
         {
             ArgumentNullException.ThrowIfNull(attestation);
             DateTimeOffset now = _timeProvider.GetUtcNow();
-            bool allowed = attestation.Attested && attestation.AllowWrite && elevated && snapshot is not null
+            bool allowed = attestation.Attested && attestation.AllowWrite && elevated && snapshot is { IsComplete: true }
                 && snapshot.CapturedAtUtc <= now && now - snapshot.CapturedAtUtc <= TimeSpan.FromSeconds(15)
                 && snapshot.Inventory.IsEmpty && snapshot.RestorationEligible && IsEmptyPolicy(snapshot.LocalPolicyXml)
                 && snapshot.Revision == _preview.InventoryRevision && snapshot.AppIdServiceRunning && snapshot.AppIdServiceAutomatic

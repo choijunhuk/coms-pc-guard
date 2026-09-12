@@ -70,53 +70,62 @@ namespace Guard.WindowsPoc.Native
             return info;
         }
 
-        public async Task<WindowsCommandResult> RunAsync(WindowsCommandRequest request, CancellationToken cancellationToken)
+        public Task<WindowsCommandResult> RunAsync(WindowsCommandRequest request, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(request);
-            if (!OperatingSystem.IsWindows())
-            {
-                throw new PlatformNotSupportedException("Windows VM only.");
-            }
-
             cancellationToken.ThrowIfCancellationRequested();
-            if (request.Command is WindowsCommand.Apply or WindowsCommand.Restore)
-            {
-                throw new InvalidOperationException("Native mutation is disabled until durable journal authorization is installed.");
-            }
+            // Directory-only checks cannot establish script trust. No process may start until
+            // file ownership/ACLs, every ancestor and replacement races are verified.
+            throw new InvalidOperationException("Native script execution is disabled pending complete trust verification.");
+        }
 
-            VerifyDirectory(new DirectoryInfo(Root));
-            VerifyDirectory(new DirectoryInfo(Root + @"\Scripts"));
-            ProcessStartInfo info = CreateStartInfo(request.Command);
-            string scriptPath = info.ArgumentList[5];
-            if (!File.Exists(scriptPath) || (File.GetAttributes(scriptPath) & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new InvalidOperationException("Trusted fixed script unavailable.");
-            }
-
-            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            using Process process = new() { StartInfo = info };
-            _ = process.Start();
-            Task<string> output = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            Task<string> error = process.StandardError.ReadToEndAsync(timeout.Token);
+        public static AppLockerNativeSnapshot ParseSnapshot(string json)
+        {
             try
             {
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-                string json = await output.ConfigureAwait(false);
-                _ = await error.ConfigureAwait(false); // Never echo native output or errors: they may contain identities/XML.
-                return process.ExitCode != 0
-                    ? throw new InvalidOperationException("Native command failed.")
-                    : new(JsonSerializer.Deserialize<AppLockerNativeSnapshot>(json) ?? throw new InvalidOperationException("Native inventory unavailable."));
-            }
-            catch (OperationCanceledException)
-            {
-                if (!process.HasExited)
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("CapturedAtUtc", out JsonElement captured)
+                    || captured.ValueKind != JsonValueKind.String
+                    || !captured.TryGetDateTimeOffset(out DateTimeOffset timestamp) || timestamp == default)
                 {
-                    process.Kill(entireProcessTree: true);
+                    throw new InvalidOperationException("Native inventory unavailable.");
                 }
 
-                throw;
+                string revision = RequiredText(root, "Revision");
+                string xml = RequiredText(root, "LocalPolicyXml");
+                bool restoration = RequiredBoolean(root, "RestorationEligible");
+                bool running = RequiredBoolean(root, "AppIdServiceRunning");
+                bool automatic = RequiredBoolean(root, "AppIdServiceAutomatic");
+                _ = root.TryGetProperty("Inventory", out JsonElement inventory);
+                return new(timestamp, revision, new(Presence(inventory, "Local"), Presence(inventory, "EffectiveGroupPolicy"),
+                    Presence(inventory, "CspMdm"), Presence(inventory, "Wdac")), xml, restoration, running, automatic);
             }
+            catch (JsonException)
+            {
+                // Do not include parser messages, which may contain native identities or raw payload.
+                throw new InvalidOperationException("Native inventory unavailable.");
+            }
+        }
+
+        private static string RequiredText(JsonElement root, string name)
+        {
+            return root.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(value.GetString()) ? value.GetString()! : throw new InvalidOperationException("Native inventory unavailable.");
+        }
+
+        private static bool RequiredBoolean(JsonElement root, string name)
+        {
+            return root.TryGetProperty(name, out JsonElement value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? value.GetBoolean() : throw new InvalidOperationException("Native inventory unavailable.");
+        }
+
+        private static Inventory.PolicyPresence Presence(JsonElement inventory, string name)
+        {
+            return inventory.ValueKind == JsonValueKind.Object && inventory.TryGetProperty(name, out JsonElement value)
+                && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int presence) && presence is 1 or 2
+                ? (Inventory.PolicyPresence)presence : Inventory.PolicyPresence.Unknown;
         }
 
         [System.Runtime.Versioning.SupportedOSPlatform("windows")]

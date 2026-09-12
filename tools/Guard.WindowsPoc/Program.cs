@@ -16,7 +16,12 @@ if (!OperatingSystem.IsWindows())
 try
 {
     WindowsCommandResult result = await new PowerShellCommandRunner().RunAsync(new(WindowsCommand.Capture), CancellationToken.None);
-    await new PocEvidenceWriter(Console.Out).WriteAsync(PocExitCode.Success, "", result.Snapshot?.LocalPolicyXml ?? "");
+    if (result.Snapshot is not { IsComplete: true } snapshot)
+    {
+        return (int)PocExitCode.Unavailable;
+    }
+
+    await new PocEvidenceWriter(Console.Out).WriteAsync(PocExitCode.Success, "", snapshot.LocalPolicyXml);
     return (int)PocExitCode.Success;
 }
 catch (OperationCanceledException) { return (int)PocExitCode.TimedOut; }

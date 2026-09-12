@@ -1,11 +1,11 @@
 # Roadmap
 
-- **Phase A — research, plan, approval:** complete; the approved plan is `PLAN.md`.
-- **Bootstrap — reproducible repository:** complete for the portable solution, documents, locks, and compile-only CI.
-- **Phase B — Windows enforcement PoC:** requires an approved isolated Windows VM and ten harmless-fixture scenarios covering AppLocker, temporary allowance, coexistence, recovery, and observed policy.
-- **Phase C — Core, storage, service coordination:** portable Core policy slice complete; persistence and reconciliation remain next, while Windows validation is blocked.
-- **Phase D — Owner, IPC, ACL, recovery:** implement actual token/SID and tamper-boundary checks; target Windows evidence is required.
-- **Phase E — Admin, Notifier, operations:** only after the Phase B enforcement contract has passed; no UI may claim protection that Phase B has not demonstrated.
-- **Phase F — MSI, lifecycle, release:** clean install, repair, upgrade, uninstall, and trust-mode evidence after the WiX license gate is cleared.
+- **Phase A — research, plan, approval:** complete.
+- **Bootstrap — reproducible repository:** complete.
+- **Core policy:** merged in PR #4; hosted clean run 34692272375 confirms the portable slice.
+- **Persistence/reconciliation:** complete locally through Task 4; Task 5 evidence/docs are committed and pending hosted review/CI.
+- **Next — app identity and Windows adapter:** define Application Identity startup/health, map registered app identity to owned policy, implement capability/conflict/observation adapters, and prove behavior in an approved isolated Windows VM.
+- **Windows enforcement PoC:** `BLOCKED_WINDOWS_VM` until ten harmless-fixture scenarios cover AppLocker, temporary allowance, coexistence, recovery, and observed policy.
+- **Owner, IPC, ACL, recovery; Admin/Notifier; MSI lifecycle:** remain gated on the Windows enforcement contract and WiX `wix7` EULA acceptance.
 
-The enforcement gate is explicit: Phase B must pass before Phase E. A missing VM remains `BLOCKED_WINDOWS_VM`, not an invitation to substitute a macOS or CI result.
+Portable tests and hosted CI are not native Windows acceptance evidence. A missing VM remains `BLOCKED_WINDOWS_VM`, not an invitation to substitute macOS or CI results.

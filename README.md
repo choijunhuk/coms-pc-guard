@@ -4,34 +4,29 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-Phase A is approved and the portable Core policy slice is locally complete pending PR/CI. `Guard.Core` evaluates deterministic schedule, priority, temporary-grant, audit-only, and status-projection decisions. No Windows enforcement, installer, service, UI, or recovery implementation exists; Windows validation remains required before any enforcement claim.
+The portable Core policy and `Guard.Service` persistence/reconciliation slices are complete locally pending docs PR/CI. `Guard.Service` is a class library in this slice, not an installed/running Windows Service. No Windows enforcement, installer, UI, or native recovery claim exists; the Windows VM gate remains blocked.
 
 ## Repository map
 
-- `PLAN.md` — approved scope, boundaries, phases, and acceptance evidence.
-- `src/Guard.Core` — implemented OS-independent Core policy and status-projection code.
-- `tests/Guard.Core.Tests` — implemented portable Core policy/status tests, including schedule, priority, projection, and performance coverage.
-- `.github/workflows/ci.yml` — portable and Windows compile-only CI checks.
-- Root governance documents — decisions, status, security, operations, sources, and evidence.
+- `PLAN.md` — approved scope and acceptance evidence.
+- `src/Guard.Core` — OS-independent policy, schedule, and user/app status projection.
+- `src/Guard.Service` — portable SQLite state store and reconciliation coordinator; no Windows APIs.
+- `tests/Guard.Core.Tests` — 63 Core tests.
+- `tests/Guard.Service.Tests` — 120 storage, reconciliation, and recovery tests using real temporary SQLite and test-only scripted adapters.
+- Root governance/evidence documents — decisions, status, security, operations, sources, and reports.
 
-## Local bootstrap
+## Local verification
 
-For a fresh clone, download the official [dotnet-install.sh](https://dot.net/v1/dotnet-install.sh) to a temporary directory and install the exact SDK into the ignored repository-local `.dotnet/` directory. This does not modify a global SDK or shell profile:
-
-```sh
-install_dir=$(mktemp -d)
-curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh -o "$install_dir/dotnet-install.sh"
-bash "$install_dir/dotnet-install.sh" --version 10.0.401 --install-dir "$PWD/.dotnet" --no-path
-```
-
-Then run:
+Use the exact repository SDK at `/Users/choi/Desktop/project/coms-pc-guard/.dotnet/dotnet` (the worktree does not contain a `.dotnet` directory):
 
 ```sh
-./.dotnet/dotnet restore ComsPcGuard.sln
-./.dotnet/dotnet format ComsPcGuard.sln --verify-no-changes --no-restore
-./.dotnet/dotnet build ComsPcGuard.sln -c Release --no-restore
-./.dotnet/dotnet test ComsPcGuard.sln -c Release --no-build --no-restore
-TZ=UTC ./.dotnet/dotnet test ComsPcGuard.sln -c Release --no-build --no-restore
+SDK=/Users/choi/Desktop/project/coms-pc-guard/.dotnet/dotnet
+$SDK restore ComsPcGuard.sln --locked-mode
+$SDK format ComsPcGuard.sln --verify-no-changes --no-restore
+$SDK build ComsPcGuard.sln -c Release --no-restore
+$SDK test ComsPcGuard.sln -c Release --no-build --no-restore --logger "console;verbosity=normal"
+TZ=UTC $SDK test ComsPcGuard.sln -c Release --no-build --no-restore --logger "console;verbosity=normal"
+git diff --check
 ```
 
-The current Core performance contract is <= 5 ms p95 for active-grant and schedule evaluation (observed on macOS: 0.054209 ms and 0.023417 ms respectively). macOS and hosted-runner results prove only portable configuration and Core behavior. They do not prove Windows service, AppLocker, ACL, installer, session, or recovery behavior.
+The current matrix is 183/183 per timezone run (Core 63, Service 120). macOS and hosted-runner evidence proves only portable behavior. The next phase must implement and test Application Identity and a Windows adapter in an approved isolated VM before any service/AppLocker/installer claim.

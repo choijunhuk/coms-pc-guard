@@ -4,15 +4,15 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-The portable Core policy and `Guard.Service` persistence/reconciliation slices are complete locally pending docs PR/CI. `Guard.Service` is a class library in this slice, not an installed/running Windows Service. No Windows enforcement, installer, UI, or native recovery claim exists; the Windows VM gate remains blocked.
+The portable Core policy, application identity, and `Guard.Service` persistence/reconciliation slices are complete. PR #5 is merged with hosted clean run `34701889964`; local full suites pass 242/242 in both default and `TZ=UTC` runs (Core 117, Service 125). `Guard.Service` is a class library, not an installed/running Windows Service. Windows enforcement, evidence collection, installer, UI, and native recovery remain blocked.
 
 ## Repository map
 
 - `PLAN.md` — approved scope and acceptance evidence.
 - `src/Guard.Core` — OS-independent policy, schedule, and user/app status projection.
 - `src/Guard.Service` — portable SQLite state store and reconciliation coordinator; no Windows APIs.
-- `tests/Guard.Core.Tests` — 63 Core tests.
-- `tests/Guard.Service.Tests` — 120 storage, reconciliation, and recovery tests using real temporary SQLite and test-only scripted adapters.
+- `tests/Guard.Core.Tests` — 117 policy and application-identity tests.
+- `tests/Guard.Service.Tests` — 125 storage, reconciliation, and recovery tests using real temporary SQLite and test-only scripted adapters.
 - Root governance/evidence documents — decisions, status, security, operations, sources, and reports.
 
 ## Local verification
@@ -29,4 +29,4 @@ TZ=UTC $SDK test ComsPcGuard.sln -c Release --no-build --no-restore --logger "co
 git diff --check
 ```
 
-The current matrix is 183/183 per timezone run (Core 63, Service 120). macOS and hosted-runner evidence proves only portable behavior. The next phase must implement and test Application Identity and a Windows adapter in an approved isolated VM before any service/AppLocker/installer claim.
+The current matrix is 242/242 per timezone run (Core 117, Service 125). Identity matching uses AND within each approved Publisher/PackagedApp identity and OR across explicit approved identities; discovery remains Owner-confirmed. macOS and hosted-runner evidence proves only portable behavior. Next action is AppLocker preview/compiler plus Windows evidence-provider interfaces; no UI until Phase B.

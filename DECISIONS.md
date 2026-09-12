@@ -23,3 +23,9 @@ Cancellation after `Prepared`, apply/observation exceptions, and post-apply stor
 ## DR-006 — Windows and installer gates remain explicit
 
 AppLocker, Application Identity, ACL, session, service, and installer behavior require isolated Windows evidence. WiX v7 eligibility is confirmed for this non-revenue project under current OSMF terms, but explicit `wix7` EULA acceptance remains pending in issue #3; no installer work is claimed.
+
+## DR-007 — Approved application identity is an explicit evidence boundary
+
+Portable identity contracts use AND semantics within each publisher/package identity and OR only across separately approved identities. Discovery metadata cannot approve an application; verifier-derived proposals always require Owner confirmation. Revalidation reviews the complete approved set, cache invalidation includes all reliable file and registration stamps, and process targeting requires PID + creation UTC + matching identity immediately before a future native action.
+
+PR #5 is merged; hosted run `34701889964` is the clean evidence run. The 2026-09-13 physical Windows inventory is read-only and not an authorized VM: Windows 11 Home build 26200, .NET 9.0.301 only, AppIDSvc Manual/Stopped, AppLocker cmdlet present, and zero local/effective rules. The SID is intentionally not stored. Windows evidence-provider and enforcement work remains blocked.

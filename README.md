@@ -16,7 +16,15 @@ Phase A is approved. This repository currently contains only a reproducible port
 
 ## Local bootstrap
 
-Install the pinned SDK into this repository only, then run:
+For a fresh clone, download the official [dotnet-install.sh](https://dot.net/v1/dotnet-install.sh) to a temporary directory and install the exact SDK into the ignored repository-local `.dotnet/` directory. This does not modify a global SDK or shell profile:
+
+```sh
+install_dir=$(mktemp -d)
+curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh -o "$install_dir/dotnet-install.sh"
+bash "$install_dir/dotnet-install.sh" --version 10.0.401 --install-dir "$PWD/.dotnet" --no-path
+```
+
+Then run:
 
 ```sh
 ./.dotnet/dotnet restore ComsPcGuard.sln

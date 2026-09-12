@@ -110,16 +110,7 @@ namespace Guard.Core.Schedules
                 DateOnly date = firstDate.AddDays(dayOffset);
                 foreach (WeeklyRestrictionRule rule in weeklyRules.Where(rule => rule.DayOfWeek == date.DayOfWeek))
                 {
-                    if (rule.Window.IsFullDay)
-                    {
-                        _ = candidates.Add(ToUtc(timeZone, date, TimeOnly.MinValue));
-                        _ = candidates.Add(ToUtc(timeZone, date.AddDays(1), TimeOnly.MinValue));
-                        continue;
-                    }
-
-                    _ = candidates.Add(ToUtc(timeZone, date, rule.Window.StartInclusive));
-                    DateOnly endDate = rule.Window.SpansMidnight ? date.AddDays(1) : date;
-                    _ = candidates.Add(ToUtc(timeZone, endDate, rule.Window.EndExclusive));
+                    AddWeeklyRuleBoundaries(candidates, timeZone, rule, date);
                 }
             }
 
@@ -138,6 +129,12 @@ namespace Guard.Core.Schedules
                     _ = candidates.Add(ToUtc(timeZone, dateOverride.Date, window.StartInclusive));
                     _ = candidates.Add(ToUtc(timeZone, dateOverride.Date, window.EndExclusive));
                 }
+
+                foreach (WeeklyRestrictionRule rule in weeklyRules)
+                {
+                    DateOnly nextOccurrence = GetNextOccurrenceAfter(dateOverride.Date, rule.DayOfWeek);
+                    AddWeeklyRuleBoundaries(candidates, timeZone, rule, nextOccurrence);
+                }
             }
 
             foreach (DateTimeOffset candidate in candidates.Where(candidate => candidate > utcNow).Order())
@@ -155,6 +152,30 @@ namespace Guard.Core.Schedules
             }
 
             return null;
+        }
+
+        private static void AddWeeklyRuleBoundaries(
+            HashSet<DateTimeOffset> candidates,
+            TimeZoneInfo timeZone,
+            WeeklyRestrictionRule rule,
+            DateOnly date)
+        {
+            if (rule.Window.IsFullDay)
+            {
+                _ = candidates.Add(ToUtc(timeZone, date, TimeOnly.MinValue));
+                _ = candidates.Add(ToUtc(timeZone, date.AddDays(1), TimeOnly.MinValue));
+                return;
+            }
+
+            _ = candidates.Add(ToUtc(timeZone, date, rule.Window.StartInclusive));
+            DateOnly endDate = rule.Window.SpansMidnight ? date.AddDays(1) : date;
+            _ = candidates.Add(ToUtc(timeZone, endDate, rule.Window.EndExclusive));
+        }
+
+        private static DateOnly GetNextOccurrenceAfter(DateOnly date, DayOfWeek dayOfWeek)
+        {
+            int daysUntilNext = (((int)dayOfWeek - (int)date.DayOfWeek + 6) % 7) + 1;
+            return date.AddDays(daysUntilNext);
         }
 
         private static DateTimeOffset ToUtc(TimeZoneInfo timeZone, DateOnly date, TimeOnly time)

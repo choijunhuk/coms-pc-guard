@@ -110,6 +110,35 @@ namespace Guard.Core.Tests.Schedules
         }
 
         [TestMethod]
+        public void Evaluate_OverrideSuppressesOnlyWeeklyOccurrence_FindsFollowingRecurrence()
+        {
+            PolicyDefinition policy = CreatePolicy(
+                [new WeeklyRestrictionRule("weekly-mon", DayOfWeek.Monday, Window(9, 18))],
+                [new DateOverrideRule("override-2026-09-21", new DateOnly(2026, 9, 21), [])]);
+
+            ScheduleEvaluation actual = Evaluate(policy, "2026-09-15T01:00:00+00:00");
+
+            Assert.IsFalse(actual.IsRestricted);
+            Assert.AreEqual(ParseUtc("2026-09-28T00:00:00+00:00"), actual.NextTransition);
+        }
+
+        [TestMethod]
+        public void Evaluate_ConsecutiveOverridesSuppressWeeklyOccurrences_FindsFirstUnsuppressedRecurrence()
+        {
+            PolicyDefinition policy = CreatePolicy(
+                [new WeeklyRestrictionRule("weekly-mon", DayOfWeek.Monday, Window(9, 18))],
+                [
+                    new DateOverrideRule("override-2026-09-21", new DateOnly(2026, 9, 21), []),
+                    new DateOverrideRule("override-2026-09-28", new DateOnly(2026, 9, 28), []),
+                ]);
+
+            ScheduleEvaluation actual = Evaluate(policy, "2026-09-15T01:00:00+00:00");
+
+            Assert.IsFalse(actual.IsRestricted);
+            Assert.AreEqual(ParseUtc("2026-10-05T00:00:00+00:00"), actual.NextTransition);
+        }
+
+        [TestMethod]
         public void Evaluate_PolicyAndOverrideRuleSnapshotCallerOwnedCollections()
         {
             List<RestrictionWindow> windows = [Window(14, 16)];

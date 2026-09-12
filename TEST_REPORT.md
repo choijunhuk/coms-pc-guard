@@ -21,7 +21,7 @@ This is `PASS` for portable Core policy behavior and the measured <= 5 ms perfor
 
 ## Bootstrap commands
 
-Actual commands run with `./.dotnet/dotnet` were `restore ComsPcGuard.sln`, `restore ComsPcGuard.sln --locked-mode`, `format ComsPcGuard.sln --verify-no-changes --no-restore`, `build ComsPcGuard.sln -c Release --no-restore`, and `test ComsPcGuard.sln -c Release --no-build --no-restore --logger "console;verbosity=normal"`. Both restores, format verification, and Release build exited 0 with zero warnings. The test command exited 0 and discovered no tests because no product behavior exists.
+The initial bootstrap history included a zero-test `NOT_RUN_PRODUCT_BEHAVIOR` state before the Core policy implementation. That historical state is superseded by the current Core evidence above: the default and `TZ=UTC` full gates each pass 61/61 tests.
 
 | Evidence | Classification |
 | --- | --- |

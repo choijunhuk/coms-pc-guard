@@ -22,6 +22,6 @@ The approved repository is `choijunhuk/coms-pc-guard`, private, with `main`, `or
 
 ## DR-006 — Core policy is portable and audit-safe
 
-The Core slice is an audit-only-capable decision engine: maintenance/recovery, emergency restriction, trusted scoped temporary grants, date overrides, weekly schedules, and unregistered-app allowance are evaluated in that order. Audit-only changes a restriction result to `AuditOnly` while retaining its reason and matched rules; maintenance and allow results remain allowed. An unregistered app is allowed before emergency evaluation, and a date override suppresses the weekly occurrence and any prior-day overnight tail for that local date.
+The Core slice is an audit-only-capable decision engine. Its implemented order is unregistered app allowed first, then maintenance/recovery, emergency restriction, an active trusted matching grant, and the effective date override/weekly schedule; audit-only then transforms restrictions to `AuditOnly` while retaining their reason and matched rules. Maintenance and allow results remain allowed. A date override suppresses the weekly occurrence and any prior-day overnight tail for that local date.
 
 WiX v7 is eligible for this non-revenue open-source project under the current OSMF terms because annual project revenue is below USD 10,000. Eligibility does not equal acceptance: the installer must record an explicit `wix7` EULA acceptance gesture in issue #3 before WiX is invoked or installer work is claimed.

@@ -9,8 +9,8 @@ Phase A is approved and the portable Core policy slice is locally complete pendi
 ## Repository map
 
 - `PLAN.md` — approved scope, boundaries, phases, and acceptance evidence.
-- `src/Guard.Core` — future OS-independent policy model.
-- `tests/Guard.Core.Tests` — future Core behavior tests.
+- `src/Guard.Core` — implemented OS-independent Core policy and status-projection code.
+- `tests/Guard.Core.Tests` — implemented portable Core policy/status tests, including schedule, priority, projection, and performance coverage.
 - `.github/workflows/ci.yml` — portable and Windows compile-only CI checks.
 - Root governance documents — decisions, status, security, operations, sources, and evidence.
 

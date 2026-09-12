@@ -14,4 +14,5 @@ Check date: 2026-09-12. Recheck version, licensing, runner image, and Windows se
 - [SmartScreen reputation](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
 - [WiX v7.0.0 release](https://github.com/wixtoolset/wix/releases/tag/v7.0.0)
 - [WiX lifecycle, license, and OSMF](https://docs.firegiant.com/wix/)
+- [WiX OSMF](https://docs.firegiant.com/wix/osmf/), checked 2026-09-12; eligibility is confirmed for non-revenue use below USD 10,000 annual project revenue, while explicit `wix7` EULA acceptance remains pending in [GitHub issue #3](https://github.com/choijunhuk/coms-pc-guard/issues/3)
 - [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)

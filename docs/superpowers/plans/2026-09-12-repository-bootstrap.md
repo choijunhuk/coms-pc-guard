@@ -156,7 +156,7 @@ Create `.github/workflows/ci.yml` triggered by pull requests and pushes to `main
 portable:
   runs-on: ubuntu-24.04
   steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
       with:
         dotnet-version: 10.0.401

@@ -19,3 +19,9 @@ The approved repository is `choijunhuk/coms-pc-guard`, private, with `main`, `or
 ## DR-005 — package trust modes
 
 `DevelopmentUnsigned` is limited to approved isolated-VM testing. `SignedRelease` requires a configured Authenticode chain, publisher, and timestamp verification. No release claim is made by this bootstrap.
+
+## DR-006 — Core policy is portable and audit-safe
+
+The Core slice is an audit-only-capable decision engine. Its implemented order is unregistered app allowed first, then maintenance/recovery, emergency restriction, an active trusted matching grant, and the effective date override/weekly schedule; audit-only then transforms restrictions to `AuditOnly` while retaining their reason and matched rules. Maintenance and allow results remain allowed. A date override suppresses the weekly occurrence and any prior-day overnight tail for that local date.
+
+WiX v7 is eligible for this non-revenue open-source project under the current OSMF terms because annual project revenue is below USD 10,000. Eligibility does not equal acceptance: the installer must record an explicit `wix7` EULA acceptance gesture in issue #3 before WiX is invoked or installer work is claimed.

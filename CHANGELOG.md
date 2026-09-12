@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file. The format foll
 ### Added
 
 - Reproducible .NET 10 portable repository bootstrap, central package policy, lock files, governance documents, and compile-only CI.
+- User-visible portable Core policy engine with deterministic schedule, priority, temporary-grant, audit-only, and status-projection decisions.
 
 ### Security
 

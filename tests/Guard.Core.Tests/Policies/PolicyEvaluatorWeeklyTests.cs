@@ -9,6 +9,7 @@ namespace Guard.Core.Tests.Policies
     {
         private static readonly string[] AlphaAndZeta = ["alpha", "zeta"];
         private static readonly string[] Immutable = ["immutable"];
+        private static readonly string[] PolicySnapshot = ["policy-snapshot"];
 
 #pragma warning disable CA1707 // Test names use requirement terminology as a readable behavior contract.
         [TestMethod]
@@ -69,11 +70,24 @@ namespace Guard.Core.Tests.Policies
                 new PolicyEvaluator().Evaluate(CreatePolicy(
                     new WeeklyRestrictionRule("duplicate", DayOfWeek.Monday, Window(9, 18)),
                     new WeeklyRestrictionRule("duplicate", DayOfWeek.Tuesday, Window(9, 18))), unregisteredRequest));
-            _ = Assert.ThrowsExactly<ArgumentNullException>(() =>
-                new PolicyEvaluator().Evaluate(CreatePolicy(null!), unregisteredRequest));
             _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
                 new PolicyEvaluator().Evaluate(CreatePolicy(
                     new WeeklyRestrictionRule("invalid-day", (DayOfWeek)7, Window(9, 18))), unregisteredRequest));
+        }
+
+        [TestMethod]
+        public void Evaluate_NullWeeklyRuleEntry_IsRejectedBeforeUnregisteredAppShortCircuit()
+        {
+            IReadOnlyList<WeeklyRestrictionRule> weeklyRules = [null!];
+            PolicyDefinition policy = new()
+            {
+                Version = PolicyTestData.DefaultPolicyVersion,
+                TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time"),
+                WeeklyRules = weeklyRules,
+            };
+
+            _ = Assert.ThrowsExactly<ArgumentException>(() =>
+                new PolicyEvaluator().Evaluate(policy, CreateRequest(isRegisteredApp: false)));
         }
 
         [TestMethod]
@@ -133,6 +147,55 @@ namespace Guard.Core.Tests.Policies
 
             Assert.IsTrue(actual.Decision == PolicyDecisionKind.Restricted);
             Assert.IsNull(actual.NextTransition);
+        }
+
+        [TestMethod]
+        public void Evaluate_IsolatedFullDayRule_TransitionsAtNextLocalMidnight()
+        {
+            PolicyDefinition policy = CreatePolicy(
+                new WeeklyRestrictionRule("mon", DayOfWeek.Monday, FullDayWindow()));
+            PolicyEvaluationRequest request = CreateRequest(nowUtc: new DateTimeOffset(2026, 9, 14, 3, 0, 0, TimeSpan.Zero));
+
+            PolicyDecision actual = new PolicyEvaluator().Evaluate(policy, request);
+
+            Assert.AreEqual(PolicyDecisionKind.Restricted, actual.Decision);
+            Assert.AreEqual(new DateTimeOffset(2026, 9, 14, 15, 0, 0, TimeSpan.Zero), actual.NextTransition);
+        }
+
+        [TestMethod]
+        public void Evaluate_ConsecutiveFullDayRules_SkipsNoOpMidnightAndFindsEndOfCoverage()
+        {
+            PolicyDefinition policy = CreatePolicy(
+                new WeeklyRestrictionRule("mon", DayOfWeek.Monday, FullDayWindow()),
+                new WeeklyRestrictionRule("tue", DayOfWeek.Tuesday, FullDayWindow()));
+            PolicyEvaluationRequest request = CreateRequest(nowUtc: new DateTimeOffset(2026, 9, 14, 3, 0, 0, TimeSpan.Zero));
+
+            PolicyDecision actual = new PolicyEvaluator().Evaluate(policy, request);
+
+            Assert.AreEqual(new DateTimeOffset(2026, 9, 15, 15, 0, 0, TimeSpan.Zero), actual.NextTransition);
+        }
+
+        [TestMethod]
+        public void Evaluate_PolicyDefinitionSnapshotsCallerRuleListAtConstruction()
+        {
+            List<WeeklyRestrictionRule> weeklyRules =
+            [
+                new("policy-snapshot", DayOfWeek.Monday, Window(9, 18)),
+            ];
+            PolicyDefinition policy = new()
+            {
+                Version = PolicyTestData.DefaultPolicyVersion,
+                TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time"),
+                WeeklyRules = weeklyRules,
+            };
+            weeklyRules.Clear();
+
+            PolicyDecision actual = new PolicyEvaluator().Evaluate(
+                policy,
+                CreateRequest(nowUtc: new DateTimeOffset(2026, 9, 14, 0, 30, 0, TimeSpan.Zero)));
+
+            Assert.AreEqual(PolicyDecisionKind.Restricted, actual.Decision);
+            CollectionAssert.AreEqual(PolicySnapshot, actual.MatchedRuleIds.ToArray());
         }
 
         [TestMethod]

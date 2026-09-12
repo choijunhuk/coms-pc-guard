@@ -60,6 +60,7 @@ namespace Guard.Core.Schedules
                     if (rule.Window.IsFullDay)
                     {
                         _ = candidates.Add(ToUtc(timeZone, date, TimeOnly.MinValue));
+                        _ = candidates.Add(ToUtc(timeZone, date.AddDays(1), TimeOnly.MinValue));
                         continue;
                     }
 

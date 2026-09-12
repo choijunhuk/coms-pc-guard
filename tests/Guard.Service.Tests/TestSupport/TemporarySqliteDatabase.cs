@@ -4,11 +4,11 @@ namespace Guard.Service.Tests.TestSupport
     {
         private readonly string _directoryPath;
 
-        public TemporarySqliteDatabase()
+        public TemporarySqliteDatabase(string databaseFileName = "guard.db")
         {
             _directoryPath = Path.Combine(Path.GetTempPath(), "coms-pc-guard-tests", Guid.NewGuid().ToString("N"));
             _ = Directory.CreateDirectory(_directoryPath);
-            DatabasePath = Path.Combine(_directoryPath, "guard.db");
+            DatabasePath = Path.Combine(_directoryPath, databaseFileName);
         }
 
         public string DatabasePath { get; }

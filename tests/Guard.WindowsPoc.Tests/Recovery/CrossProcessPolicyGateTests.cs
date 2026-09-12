@@ -8,6 +8,28 @@ namespace Guard.WindowsPoc.Tests.Recovery
         private const string Owner = "S-1-5-21-1-2-3-1001";
 
         [TestMethod]
+        [DataRow(Owner, false, true)]
+        [DataRow("S-1-5-18", true, false)]
+        [DataRow("S-1-5-21-1-2-3-1002", true, false)]
+        [DataRow("S-1-5-18", false, false)]
+        public void NativeOwnerIdentityRejectsImpersonationBeforeReadingProcessToken(string processSid, bool ownerImpersonation, bool accepted)
+        {
+            bool processRead = false;
+            void Validate()
+            {
+                CrossProcessPolicyGate.ValidateNativeOwner(Owner, () => ownerImpersonation, () =>
+                {
+                    processRead = true;
+                    // GetCurrent(false) returns the impersonated Owner if called before rejection.
+                    return ownerImpersonation ? Owner : processSid;
+                });
+            }
+            if (accepted) { Validate(); }
+            else { _ = Assert.ThrowsExactly<InvalidOperationException>(Validate); }
+            Assert.AreEqual(!ownerImpersonation, processRead);
+        }
+
+        [TestMethod]
         public async Task AcquisitionReceivesCancellationSignalRatherThanOnlyPolling()
         {
             using Mutex mutex = new();

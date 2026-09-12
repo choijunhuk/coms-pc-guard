@@ -56,3 +56,23 @@ All commands use `/Users/choi/Desktop/project/coms-pc-guard/.dotnet/dotnet`; `do
 - Only a locally computed append's exact full hash and length may replace the in-memory evidence expectation. Partial/cancelled/unavailable writes cannot be acknowledged as successful. Existing chained journal hashes remain corruption evidence, not cryptographic authentication against the trusted Owner/SYSTEM.
 - Native ACL creation/open races, actual filesystem sharing and metadata behavior, cross-process Windows synchronization, and native SYSTEM startup recovery are unaccepted. Task 6 must provide protected Owner attestation before SYSTEM watchdog/recovery can run. All mutation callers remain disabled.
 - No subagents or external reviewers were dispatched; this is implementation/self-review evidence only.
+
+## Fix round 1/5 — reject impersonated Owner attestation
+
+Finding addressed: `WindowsIdentity.GetCurrent()` can return an impersonated thread identity. A SYSTEM or other process impersonating Owner could consequently pass the native Owner check. The shared native check used by both mutex opening and `WindowsPocStateLease.Open` now calls framework `WindowsIdentity.GetCurrent(ifImpersonating: true)` first and refuses any returned identity. Only when no impersonation exists does it call `GetCurrent(ifImpersonating: false)`, which then reads the process identity. Both identities are disposed. These semantics were checked against the installed net10.0 framework reference XML for `WindowsIdentity.GetCurrent(Boolean)`; no P/Invoke, lookup package, or impersonation operation was introduced.
+
+Added an internal injected identity-reader seam and four data rows: process Owner/no impersonation succeeds; SYSTEM+Owner impersonation refuses; another process+Owner impersonation refuses; SYSTEM/no impersonation refuses. Impersonation rows additionally prove the second identity reader was never invoked. The reader double reproduces the framework behavior of returning the impersonated Owner when queried too early. Native entry points use only the framework readers; the injected seam is not a native authorization override.
+
+Exact commands use the same worktree and SDK abbreviation defined above:
+
+| Phase / command | Output |
+| --- | --- |
+| RED: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter NativeOwnerIdentityRejectsImpersonation` | Exit 1; 2 failed, 2 passed. Both impersonation rows failed with `Expected exception of exact type InvalidOperationException but no exception was thrown.` |
+| GREEN: `dotnet test tests/Guard.WindowsPoc.Tests --no-restore --filter 'NativeOwnerIdentityRejectsImpersonation\|FullyQualifiedName~Recovery\|FullyQualifiedName~PocJournalStoreTests'` (literal filter contains pipes without backslashes) | Exit 0; 26/26 passed, 565 ms. Includes all four identity rows and existing gate/journal regressions. |
+| `dotnet build ComsPcGuard.sln -c Release --no-restore` | Exit 0; 0 warnings, 0 errors. |
+| `dotnet format ComsPcGuard.sln --verify-no-changes --no-restore` | Final exit 0, empty output. Initial check found test-only `IDE0061`; converted the local function to the required block body before rerunning. |
+| `dotnet test ComsPcGuard.sln -c Release --no-build --no-restore` | Exit 0; Core 117, Service 148, PoC 87; 352/352 total. |
+| `TZ=America/New_York dotnet test ComsPcGuard.sln -c Release --no-restore` | Exit 0; rebuilt final formatted tests and passed the same 352/352 total. |
+| `git diff --check` | Exit 0. |
+
+Changed only `CrossProcessPolicyGate.cs`, `CrossProcessPolicyGateTests.cs`, and this report. Mutex acquisition/release, journal I/O, and all disabled policy writes remain unchanged. Self-review confirms the impersonation check executes synchronously before the process identity read and throws before any mutex/file opening. Native Windows execution and the future protected SYSTEM attestation factory remain **NOT_RUN_WINDOWS_ONLY** / deferred as previously stated. No subagents or reviewers were dispatched.

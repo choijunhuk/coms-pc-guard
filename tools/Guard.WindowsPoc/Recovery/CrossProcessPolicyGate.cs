@@ -54,8 +54,22 @@ namespace Guard.WindowsPoc.Recovery
         [SupportedOSPlatform("windows")]
         internal static void ValidateNativeOwner(string ownerSid)
         {
-            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
-            ValidateOwnerIdentity(ownerSid, identity.User?.Value);
+            ValidateNativeOwner(ownerSid, () =>
+            {
+                using WindowsIdentity? impersonated = WindowsIdentity.GetCurrent(ifImpersonating: true);
+                return impersonated is not null;
+            }, () =>
+            {
+                // No impersonation is permitted above, so this reads the process identity.
+                using WindowsIdentity? identity = WindowsIdentity.GetCurrent(ifImpersonating: false);
+                return identity?.User?.Value;
+            });
+        }
+
+        internal static void ValidateNativeOwner(string ownerSid, Func<bool> isImpersonating, Func<string?> readProcessSid)
+        {
+            if (isImpersonating()) { throw new InvalidOperationException("Impersonated Owner attestation is not permitted."); }
+            ValidateOwnerIdentity(ownerSid, readProcessSid());
         }
         internal static void ValidateSecurity(string ownerSid, string? actualOwner, bool known, IReadOnlyList<PolicyGateAccess> rules)
         {

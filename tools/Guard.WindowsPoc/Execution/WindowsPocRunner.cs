@@ -15,6 +15,7 @@ namespace Guard.WindowsPoc.Execution
     internal sealed class WindowsPocRunner(IPocPolicyGateway gateway, IPocJournalStore store, IPolicyGate gate,
         TimeProvider clock, string ownershipEvidence, string recoveryLease, Func<PocRunResult, Task> evidence)
     {
+        private bool _hostRecoveryRequired;
         public Task<PocRunResult> RunAsync(IReadOnlyList<AppLockerPolicySnapshot> transitions, CancellationToken token = default)
         {
             ArgumentNullException.ThrowIfNull(transitions);
@@ -32,24 +33,29 @@ namespace Guard.WindowsPoc.Execution
             bool drift = false;
             try
             {
+                if (_hostRecoveryRequired || await store.HasRecoveryBarrierAsync(token).ConfigureAwait(false))
+                { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 if (await store.ReadAsync(token).ConfigureAwait(false) is not null)
                 { throw new InvalidOperationException("Existing journal must be recovered before a new run."); }
-                AppLockerPolicySnapshot baseline = await gateway.CaptureAsync(token).ConfigureAwait(false);
+                AppLockerPolicySnapshot baseline = await CaptureProtectedAsync(token).ConfigureAwait(false);
                 if (!baseline.IsReady(clock.GetUtcNow()) || !baseline.IsEmpty)
                 { drift = true; throw new InvalidOperationException("Initial inventory is not eligible."); }
+                await store.SetRecoveryBarrierAsync(false, token).ConfigureAwait(false);
                 AppLockerPolicySnapshot expected = baseline;
                 foreach (AppLockerPolicySnapshot after in transitions)
                 {
                     token.ThrowIfCancellationRequested();
-                    AppLockerPolicySnapshot fresh = await gateway.CaptureAsync(token).ConfigureAwait(false);
+                    AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !fresh.SamePolicy(expected)) { drift = true; break; }
+                    await store.SetRecoveryBarrierAsync(false, token).ConfigureAwait(false);
                     PocTransactionJournal journal = PocTransactionJournal.Prepare(baseline, fresh, after, ownershipEvidence, recoveryLease, clock.GetUtcNow());
                     await store.SaveAsync(journal, token).ConfigureAwait(false);
                     journal = journal.WithPhase(PocJournalPhase.WritePending);
                     await store.SaveAsync(journal, token).ConfigureAwait(false);
                     await gateway.WriteAsync(journal, false, token).ConfigureAwait(false);
-                    fresh = await gateway.CaptureAsync(token).ConfigureAwait(false);
+                    fresh = await CaptureProtectedAsync(token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !fresh.SamePolicy(after)) { drift = true; break; }
+                    await store.SetRecoveryBarrierAsync(false, token).ConfigureAwait(false);
                     await store.SaveAsync(journal.WithPhase(PocJournalPhase.Mutated), token).ConfigureAwait(false);
                     if (!await gateway.ProbeAsync(token).ConfigureAwait(false)) { throw new InvalidOperationException("Observation mismatch."); }
                     expected = after;
@@ -78,29 +84,35 @@ namespace Guard.WindowsPoc.Execution
             using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(30));
             try
             {
+                if (_hostRecoveryRequired || await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false))
+                { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 PocTransactionJournal? journal = await store.ReadAsync(cleanup.Token).ConfigureAwait(false);
                 if (journal is null) { return PocRunResult.Success; }
                 if (journal.Phase == PocJournalPhase.HostCloneRecoveryRequired) { return PocRunResult.HostCloneRecoveryRequired; }
-                AppLockerPolicySnapshot fresh = await gateway.CaptureAsync(cleanup.Token).ConfigureAwait(false);
+                AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                 if (!fresh.IsReady(clock.GetUtcNow()) || !journal.Recognizes(fresh))
                 { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
+                await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                 if (!fresh.SamePolicy(journal.InitialBaseline))
                 {
                     // Re-read immediately before preparing the cleanup OS write. Gateway must repeat this
                     // comparison inside its trusted native boundary as protection against external actors.
-                    fresh = await gateway.CaptureAsync(cleanup.Token).ConfigureAwait(false);
+                    fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !journal.Recognizes(fresh))
                     { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
+                    await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                     if (!fresh.SamePolicy(journal.InitialBaseline))
                     {
                         PocTransactionJournal restore = PocTransactionJournal.Prepare(journal.InitialBaseline, fresh,
-                            journal.InitialBaseline with { CapturedAtUtc = clock.GetUtcNow() }, journal.OwnershipEvidence, journal.RecoveryLease, clock.GetUtcNow())
-                            .WithPhase(PocJournalPhase.WritePending);
+                            journal.InitialBaseline with { CapturedAtUtc = clock.GetUtcNow() }, journal.OwnershipEvidence, journal.RecoveryLease, clock.GetUtcNow());
+                        await store.SaveAsync(restore, cleanup.Token).ConfigureAwait(false);
+                        restore = restore.WithPhase(PocJournalPhase.WritePending);
                         await store.SaveAsync(restore, cleanup.Token).ConfigureAwait(false);
                         await gateway.WriteAsync(restore, true, cleanup.Token).ConfigureAwait(false);
-                        fresh = await gateway.CaptureAsync(cleanup.Token).ConfigureAwait(false);
+                        fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                         if (!fresh.IsReady(clock.GetUtcNow()) || !fresh.SamePolicy(journal.InitialBaseline))
                         { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
+                        await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                         journal = restore;
                     }
                 }
@@ -112,6 +124,7 @@ namespace Guard.WindowsPoc.Execution
 
         private async Task MarkHostRecoveryAsync()
         {
+            _hostRecoveryRequired = true;
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
             try
             {
@@ -119,7 +132,15 @@ namespace Guard.WindowsPoc.Execution
                 if (journal is not null)
                 { await store.SaveAsync(journal.WithPhase(PocJournalPhase.HostCloneRecoveryRequired), timeout.Token).ConfigureAwait(false); }
             }
-            catch (Exception exception) when (Recoverable(exception)) { /* Failure cannot authorize another policy write. */ }
+            catch (Exception exception) when (Recoverable(exception)) { /* The pre-capture durable barrier remains armed. */ }
+        }
+
+        private async Task<AppLockerPolicySnapshot> CaptureProtectedAsync(CancellationToken token)
+        {
+            // Persist before observing: a crash or failed drift-marker save cannot erase an observation.
+            // An interrupted capture requires host recovery even if the last policy state is recognizable.
+            await store.SetRecoveryBarrierAsync(true, token).ConfigureAwait(false);
+            return await gateway.CaptureAsync(token).ConfigureAwait(false);
         }
 
         private static bool Recoverable(Exception exception)

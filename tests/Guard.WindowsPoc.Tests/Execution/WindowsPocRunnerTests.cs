@@ -144,6 +144,92 @@ namespace Guard.WindowsPoc.Tests.Execution
             CollectionAssert.AreEqual(new[] { PocRunResult.HostCloneRecoveryRequired }, reported);
         }
 
+        [TestMethod]
+        public async Task PreJournalDriftBlocksSameRunnerAndRestartAfterPolicyDisappears()
+        {
+            ScriptedGateway gateway = new() { DriftAtCapture = 1 };
+            MemoryJournal store = new();
+            WindowsPocRunner runner = Runner(gateway, store);
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RunAsync([First]));
+            gateway.Current = Empty;
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RunAsync([First]));
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RunAsync([First]));
+            Assert.AreEqual(0, gateway.Writes.Count);
+        }
+
+        [TestMethod]
+        public async Task FailedDriftPersistenceCannotAuthorizeRecoveryOnSameRunnerOrRestart()
+        {
+            ScriptedGateway gateway = new() { DriftAtCapture = 3 };
+            MemoryJournal store = new() { FailHostRecovery = true };
+            WindowsPocRunner runner = Runner(gateway, store);
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RunAsync([First]));
+            gateway.Current = First;
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RecoverAsync());
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(0, gateway.RestoreWrites);
+        }
+
+        [TestMethod]
+        public async Task RestorationPreparedSurvivesCrashAndDiskReopenBeforeWritePending()
+        {
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".journal");
+            ScriptedGateway gateway = new() { Current = First };
+            try
+            {
+                await using (FileStream file = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read))
+                {
+                    DurablePocJournalStore disk = new(file);
+                    await disk.SaveAsync(PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
+                        .WithPhase(PocJournalPhase.Mutated), CancellationToken.None);
+                    CrashAfterRestorePrepared store = new(disk);
+                    gateway.Store = store;
+                    WindowsPocRunner runner = new(gateway, store, new TestGate(), new FixedClock(), "owner-proof", "lease", _ => Task.CompletedTask);
+                    Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RecoverAsync());
+                    Assert.AreEqual(0, gateway.RestoreWrites);
+                }
+                await using (FileStream file = new(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+                {
+                    DurablePocJournalStore disk = new(file);
+                    PocTransactionJournal? recovered = await disk.ReadAsync(CancellationToken.None);
+                    Assert.AreEqual(PocJournalPhase.Prepared, recovered!.Phase);
+                    Assert.IsTrue(recovered.Before.SamePolicy(First));
+                    Assert.IsTrue(recovered.After.SamePolicy(Empty));
+                    gateway.Store = disk;
+                    WindowsPocRunner runner = new(gateway, disk, new TestGate(), new FixedClock(), "owner-proof", "lease", _ => Task.CompletedTask);
+                    Assert.AreEqual(PocRunResult.Success, await runner.RecoverAsync());
+                    Assert.AreEqual(PocRunResult.Success, await runner.RecoverAsync());
+                    Assert.AreEqual(1, gateway.RestoreWrites);
+                    Assert.IsTrue(gateway.Current.SamePolicy(Empty));
+                }
+            }
+            finally { File.Delete(path); }
+        }
+
+        private sealed class CrashAfterRestorePrepared(IPocJournalStore inner) : IPocJournalStore
+        {
+            public Task<PocTransactionJournal?> ReadAsync(CancellationToken token)
+            {
+                return inner.ReadAsync(token);
+            }
+
+            public Task<bool> HasRecoveryBarrierAsync(CancellationToken token)
+            {
+                return inner.HasRecoveryBarrierAsync(token);
+            }
+
+            public Task SetRecoveryBarrierAsync(bool required, CancellationToken token)
+            {
+                return inner.SetRecoveryBarrierAsync(required, token);
+            }
+
+            public async Task SaveAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                await inner.SaveAsync(journal, token);
+                if (journal.Phase == PocJournalPhase.Prepared && journal.After.IsEmpty) { throw new IOException("process interrupted after durable restoration Prepared"); }
+            }
+        }
+
         private static WindowsPocRunner Runner(ScriptedGateway gateway, MemoryJournal store, bool failEvidence = false)
         {
             gateway.Store = store;
@@ -173,6 +259,19 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             public PocTransactionJournal? Value { get; set; }
             public bool FailPending { get; set; }
+            public bool FailHostRecovery { get; set; }
+            public bool FailBarrierWrites { get; set; }
+            public bool RecoveryBarrier { get; set; }
+            public Task<bool> HasRecoveryBarrierAsync(CancellationToken token)
+            {
+                return Task.FromResult(RecoveryBarrier);
+            }
+
+            public Task SetRecoveryBarrierAsync(bool required, CancellationToken token)
+            {
+                if (FailBarrierWrites) { throw new IOException("barrier storage failed after drift observation"); }
+                RecoveryBarrier = required; return Task.CompletedTask;
+            }
             public Task<PocTransactionJournal?> ReadAsync(CancellationToken token)
             {
                 return Task.FromResult(Value);
@@ -181,6 +280,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             public Task SaveAsync(PocTransactionJournal journal, CancellationToken token)
             {
                 if (FailPending && journal.Phase == PocJournalPhase.WritePending) { throw new IOException("journal"); }
+                if (FailHostRecovery && journal.Phase == PocJournalPhase.HostCloneRecoveryRequired) { throw new IOException("host marker"); }
                 Value = journal;
                 return Task.CompletedTask;
             }
@@ -188,7 +288,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         private sealed class ScriptedGateway : IPocPolicyGateway
         {
             public AppLockerPolicySnapshot Current { get; set; } = Empty;
-            public MemoryJournal? Store { get; set; }
+            public IPocJournalStore? Store { get; set; }
             public List<AppLockerPolicySnapshot> Writes { get; } = [];
             public int RestoreWrites { get; private set; }
             public int FailWrite { get; init; }
@@ -200,13 +300,17 @@ namespace Guard.WindowsPoc.Tests.Execution
             private int _applies;
             public Task<AppLockerPolicySnapshot> CaptureAsync(CancellationToken token)
             {
-                if (++_captures == DriftAtCapture) { Current = Snapshot("<AppLockerPolicy Version=\"1\"><external /></AppLockerPolicy>"); }
+                if (++_captures == DriftAtCapture)
+                {
+                    Current = Snapshot("<AppLockerPolicy Version=\"1\"><external /></AppLockerPolicy>");
+                    if (Store is MemoryJournal { FailHostRecovery: true } memory) { memory.FailBarrierWrites = true; }
+                }
                 return Task.FromResult(Current);
             }
-            public Task WriteAsync(PocTransactionJournal journal, bool restore, CancellationToken token)
+            public async Task WriteAsync(PocTransactionJournal journal, bool restore, CancellationToken token)
             {
                 token.ThrowIfCancellationRequested();
-                Assert.AreEqual(PocJournalPhase.WritePending, Store!.Value!.Phase, "Native write must follow durable WritePending.");
+                Assert.AreEqual(PocJournalPhase.WritePending, (await Store!.ReadAsync(token))!.Phase, "Native write must follow durable WritePending.");
                 if (restore)
                 {
                     if (FailRestore) { throw new IOException("restore"); }
@@ -215,7 +319,7 @@ namespace Guard.WindowsPoc.Tests.Execution
                 else if (++_applies == FailWrite && !FailAfterMutation) { throw new IOException("before"); }
                 Current = restore ? journal.InitialBaseline : journal.After;
                 Writes.Add(Current);
-                return !restore && _applies == FailWrite && FailAfterMutation ? throw new IOException("after") : Task.CompletedTask;
+                if (!restore && _applies == FailWrite && FailAfterMutation) { throw new IOException("after"); }
             }
             public Task<bool> ProbeAsync(CancellationToken token)
             {

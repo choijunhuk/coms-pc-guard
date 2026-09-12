@@ -8,6 +8,24 @@ namespace Guard.WindowsPoc.Tests.Execution
     public sealed class PocJournalStoreTests
     {
         [TestMethod]
+        public async Task RecoveryBarrierSurvivesReopenWithoutAnyTransactionJournal()
+        {
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".journal");
+            try
+            {
+                await using (FileStream file = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read))
+                { await new DurablePocJournalStore(file).SetRecoveryBarrierAsync(true, CancellationToken.None); }
+                await using (FileStream file = new(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+                {
+                    DurablePocJournalStore store = new(file);
+                    Assert.IsTrue(await store.HasRecoveryBarrierAsync(CancellationToken.None));
+                    Assert.IsNull(await store.ReadAsync(CancellationToken.None));
+                }
+            }
+            finally { File.Delete(path); }
+        }
+
+        [TestMethod]
         public async Task DurableJournalReopensAndRejectsTruncatedTail()
         {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".journal");

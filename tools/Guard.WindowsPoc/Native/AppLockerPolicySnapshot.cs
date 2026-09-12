@@ -8,6 +8,8 @@ namespace Guard.WindowsPoc.Native
     internal sealed record AppLockerPolicySnapshot(DateTimeOffset CapturedAtUtc, string LocalPolicyXml, string EffectivePolicyXml,
         PolicyPresence CspMdm, PolicyPresence Wdac, bool AppIdServiceRunning, bool AppIdServiceAutomatic)
     {
+        public string LocalPolicyXml { get; init => field = Canonicalize(value); } = Canonicalize(LocalPolicyXml);
+        public string EffectivePolicyXml { get; init => field = Canonicalize(value); } = Canonicalize(EffectivePolicyXml);
         public string LocalHash => PolicyMutationDecision.Hash(LocalPolicyXml);
         public string EffectiveHash => PolicyMutationDecision.Hash(EffectivePolicyXml);
         public bool IsReady(DateTimeOffset now)
@@ -37,6 +39,33 @@ namespace Guard.WindowsPoc.Native
                     && (!empty || (root.Attributes().Count() == 1 && !root.HasElements && string.IsNullOrWhiteSpace(root.Value)));
             }
             catch (XmlException) { return false; }
+        }
+
+        private static string Canonicalize(string xml)
+        {
+            ArgumentNullException.ThrowIfNull(xml);
+            try
+            {
+                using StringReader input = new(xml);
+                using XmlReader reader = XmlReader.Create(input, new()
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = 1_000_000,
+                    IgnoreComments = true,
+                    IgnoreProcessingInstructions = true,
+                    IgnoreWhitespace = true
+                });
+                XElement root = XElement.Load(reader);
+                foreach (XElement element in root.DescendantsAndSelf())
+                {
+                    XAttribute[] attributes = [.. element.Attributes().OrderBy(attribute => attribute.Name.ToString(), StringComparer.Ordinal)];
+                    element.ReplaceAttributes(attributes);
+                    if (!element.Nodes().Any()) { element.RemoveNodes(); }
+                }
+                return root.ToString(SaveOptions.DisableFormatting);
+            }
+            catch (XmlException) { throw new InvalidOperationException("Policy XML cannot be canonicalized."); }
         }
     }
 }

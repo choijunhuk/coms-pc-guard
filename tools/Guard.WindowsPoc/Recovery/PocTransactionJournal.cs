@@ -49,6 +49,8 @@ namespace Guard.WindowsPoc.Recovery
 
     internal interface IPocJournalStore
     {
+        Task<bool> HasRecoveryBarrierAsync(CancellationToken token);
+        Task SetRecoveryBarrierAsync(bool required, CancellationToken token);
         Task<PocTransactionJournal?> ReadAsync(CancellationToken token);
         Task SaveAsync(PocTransactionJournal journal, CancellationToken token);
     }

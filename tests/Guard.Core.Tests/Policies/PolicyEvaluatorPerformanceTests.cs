@@ -12,7 +12,7 @@ namespace Guard.Core.Tests.Policies
 
 #pragma warning disable CA1707 // Test name uses percentile terminology from the performance contract.
         [TestMethod]
-        public void Evaluate_CompletePolicy_P95IsAtMostFiveMilliseconds()
+        public void Evaluate_CompletePolicy_ActiveGrantAndScheduleP95AreAtMostFiveMilliseconds()
         {
             DateTimeOffset now = new(2026, 9, 14, 0, 0, 0, TimeSpan.Zero);
             PolicyDefinition policy = PolicyTestData.CreateDefaultPolicy() with
@@ -32,9 +32,25 @@ namespace Guard.Core.Tests.Policies
                     new TemporaryGrant("grant-4", null, null, now.AddMinutes(-30), now.AddHours(1), TemporaryGrantTrust.Revoked),
                 ],
             };
-            PolicyEvaluationRequest request = new(now, "member-a", "app-x", IsRegisteredApp: true);
+            PolicyEvaluationRequest activeGrantRequest = new(now, "member-a", "app-x", IsRegisteredApp: true);
+            PolicyEvaluationRequest scheduleRequest = new(now, "member-c", "app-z", IsRegisteredApp: true);
             PolicyEvaluator evaluator = new();
 
+            double activeGrantP95Milliseconds = MeasureP95(evaluator, policy, activeGrantRequest);
+            double scheduleP95Milliseconds = MeasureP95(evaluator, policy, scheduleRequest);
+            TestContext.WriteLine($"PolicyEvaluator active-grant p95: {activeGrantP95Milliseconds:F6} ms");
+            TestContext.WriteLine($"PolicyEvaluator schedule p95: {scheduleP95Milliseconds:F6} ms");
+
+            Assert.IsLessThanOrEqualTo(5d, activeGrantP95Milliseconds);
+            Assert.IsLessThanOrEqualTo(5d, scheduleP95Milliseconds);
+        }
+#pragma warning restore CA1707
+
+        private static double MeasureP95(
+            PolicyEvaluator evaluator,
+            PolicyDefinition policy,
+            PolicyEvaluationRequest request)
+        {
             for (int i = 0; i < 1_000; i++)
             {
                 _ = evaluator.Evaluate(policy, request);
@@ -50,11 +66,7 @@ namespace Guard.Core.Tests.Policies
 
             Array.Sort(elapsedTicks);
             long p95Ticks = elapsedTicks[9_499];
-            double p95Milliseconds = p95Ticks * 1_000d / Stopwatch.Frequency;
-            TestContext.WriteLine($"PolicyEvaluator p95: {p95Milliseconds:F6} ms");
-
-            Assert.IsLessThanOrEqualTo(5d, p95Milliseconds);
+            return p95Ticks * 1_000d / Stopwatch.Frequency;
         }
-#pragma warning restore CA1707
     }
 }

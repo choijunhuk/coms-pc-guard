@@ -132,7 +132,7 @@ namespace Guard.Core.Tests.Policies
         }
 
         [TestMethod]
-        public void Evaluate_TwoMatchingGrants_ReturnsSortedIdsAndEarliestExpiry()
+        public void Evaluate_OverlappingMatchingGrants_SkipsExpiryThatLeavesTemporaryAllowEffective()
         {
             PolicyDefinition policy = RestrictedPolicy() with
             {
@@ -150,7 +150,42 @@ namespace Guard.Core.Tests.Policies
                 PolicyDecisionKind.TemporaryAllow,
                 PolicyReasonCode.TemporaryGrant,
                 ["alpha", "zeta"],
-                RestrictedNow.AddMinutes(20));
+                RestrictedNow.AddMinutes(45));
+        }
+
+        [TestMethod]
+        public void Evaluate_FutureMatchingGrant_TransitionsAtIssuanceBeforeScheduleBoundary()
+        {
+            DateTimeOffset issuedAt = RestrictedNow.AddMinutes(15);
+            DateTimeOffset expiresAt = RestrictedNow.AddMinutes(45);
+            PolicyDefinition policy = RestrictedPolicy() with
+            {
+                TemporaryGrants =
+                [
+                    Grant(
+                        "future",
+                        "member-a",
+                        "app-x",
+                        issuedAtUtc: issuedAt,
+                        expiresAtUtc: expiresAt),
+                ],
+            };
+
+            PolicyDecision immediatelyBefore = Evaluate(policy, nowUtc: issuedAt.AddTicks(-1));
+            PolicyDecision atIssuance = Evaluate(policy, nowUtc: issuedAt);
+
+            AssertDecision(
+                immediatelyBefore,
+                PolicyDecisionKind.Restricted,
+                PolicyReasonCode.WeeklySchedule,
+                ["weekly-mon"],
+                issuedAt);
+            AssertDecision(
+                atIssuance,
+                PolicyDecisionKind.TemporaryAllow,
+                PolicyReasonCode.TemporaryGrant,
+                ["future"],
+                expiresAt);
         }
 
         [TestMethod]

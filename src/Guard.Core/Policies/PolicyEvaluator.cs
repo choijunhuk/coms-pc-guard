@@ -42,32 +42,41 @@ namespace Guard.Core.Policies
                         policy.Version));
             }
 
-            TemporaryGrant[] matchingGrants =
+            TemporaryGrant[] scopeMatchingGrants =
             [
                 .. validatedPolicy.TemporaryGrants
                     .Where(grant =>
                         grant.Trust == TemporaryGrantTrust.Trusted &&
-                        grant.IssuedAtUtc <= request.NowUtc &&
-                        request.NowUtc < grant.ExpiresAtUtc &&
                         (grant.MemberSid is null || string.Equals(grant.MemberSid, request.MemberSid, StringComparison.Ordinal)) &&
                         (grant.AppId is null || string.Equals(grant.AppId, request.AppId, StringComparison.Ordinal)))
                     .OrderBy(grant => grant.GrantId, StringComparer.Ordinal),
             ];
+            TemporaryGrant[] matchingGrants =
+            [
+                .. scopeMatchingGrants.Where(grant => IsActive(grant, request.NowUtc)),
+            ];
+            ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(
+                validatedPolicy.TimeZone,
+                validatedPolicy.WeeklyRules,
+                validatedPolicy.DateOverrides,
+                request.NowUtc);
+            DateTimeOffset? nextTransition = FindNextEffectiveTransition(
+                policy,
+                validatedPolicy,
+                scopeMatchingGrants,
+                schedule.NextTransition,
+                request.NowUtc);
+
             if (matchingGrants.Length > 0)
             {
                 return new PolicyDecision(
                     PolicyDecisionKind.TemporaryAllow,
                     PolicyReasonCode.TemporaryGrant,
                     [.. matchingGrants.Select(grant => grant.GrantId)],
-                    matchingGrants.Min(grant => grant.ExpiresAtUtc),
+                    nextTransition,
                     policy.Version);
             }
 
-            ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(
-                validatedPolicy.TimeZone,
-                validatedPolicy.WeeklyRules,
-                validatedPolicy.DateOverrides,
-                request.NowUtc);
             PolicyDecision decision = schedule.IsRestricted
                 ? new PolicyDecision(
                     PolicyDecisionKind.Restricted,
@@ -75,17 +84,90 @@ namespace Guard.Core.Policies
                         ? PolicyReasonCode.DateOverride
                         : PolicyReasonCode.WeeklySchedule,
                     schedule.MatchedRuleIds,
-                    schedule.NextTransition,
+                    nextTransition,
                     policy.Version)
                 : new PolicyDecision(
                     PolicyDecisionKind.Allowed,
                     PolicyReasonCode.OutsideRestrictedSchedule,
                     schedule.MatchedRuleIds,
-                    schedule.NextTransition,
+                    nextTransition,
                     policy.Version);
             return ProjectAuditOnly(policy, decision);
         }
 #pragma warning restore CA1822
+
+        private static DateTimeOffset? FindNextEffectiveTransition(
+            PolicyDefinition policy,
+            ValidatedPolicy validatedPolicy,
+            IReadOnlyList<TemporaryGrant> scopeMatchingGrants,
+            DateTimeOffset? scheduleTransition,
+            DateTimeOffset nowUtc)
+        {
+            HashSet<DateTimeOffset> candidates = [];
+            if (scheduleTransition is not null)
+            {
+                _ = candidates.Add(scheduleTransition.Value);
+            }
+
+            foreach (TemporaryGrant grant in scopeMatchingGrants)
+            {
+                if (grant.IssuedAtUtc > nowUtc)
+                {
+                    _ = candidates.Add(grant.IssuedAtUtc);
+                }
+
+                if (grant.ExpiresAtUtc > nowUtc)
+                {
+                    _ = candidates.Add(grant.ExpiresAtUtc);
+                }
+            }
+
+            foreach (DateTimeOffset candidate in candidates.Order())
+            {
+                PolicyDecisionKind before = GetEffectiveDecisionKindAt(
+                    policy,
+                    validatedPolicy,
+                    scopeMatchingGrants,
+                    candidate.AddTicks(-1));
+                PolicyDecisionKind at = GetEffectiveDecisionKindAt(
+                    policy,
+                    validatedPolicy,
+                    scopeMatchingGrants,
+                    candidate);
+                if (before != at)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static PolicyDecisionKind GetEffectiveDecisionKindAt(
+            PolicyDefinition policy,
+            ValidatedPolicy validatedPolicy,
+            IReadOnlyList<TemporaryGrant> scopeMatchingGrants,
+            DateTimeOffset atUtc)
+        {
+            if (scopeMatchingGrants.Any(grant => IsActive(grant, atUtc)))
+            {
+                return PolicyDecisionKind.TemporaryAllow;
+            }
+
+            ScheduleEvaluation schedule = new ScheduleEvaluator().Evaluate(
+                validatedPolicy.TimeZone,
+                validatedPolicy.WeeklyRules,
+                validatedPolicy.DateOverrides,
+                atUtc);
+            return schedule.IsRestricted
+                ? policy.AuditOnly ? PolicyDecisionKind.AuditOnly : PolicyDecisionKind.Restricted
+                : PolicyDecisionKind.Allowed;
+        }
+
+        private static bool IsActive(TemporaryGrant grant, DateTimeOffset atUtc)
+        {
+            return grant.IssuedAtUtc <= atUtc && atUtc < grant.ExpiresAtUtc;
+        }
 
         private static bool IsDateOverride(
             IReadOnlyList<DateOverrideRule> dateOverrides,

@@ -4,9 +4,13 @@ using Guard.WindowsPoc.Safety;
 namespace Guard.WindowsPoc.Native
 {
     public enum WindowsCommand { Capture, Apply, Observe, Restore }
+    public sealed record NativePlatformEvidence(bool X64, int Build, string VmEvidence);
     public sealed record AppLockerNativeSnapshot(DateTimeOffset CapturedAtUtc, string Revision, ExternalPolicyInventory Inventory, string LocalPolicyXml, bool RestorationEligible, bool AppIdServiceRunning, bool AppIdServiceAutomatic)
     {
+        public string? EffectivePolicyXml { get; init; }
+        public NativePlatformEvidence? Platform { get; init; }
         public bool IsComplete => CapturedAtUtc != default && !string.IsNullOrWhiteSpace(Revision) && !string.IsNullOrWhiteSpace(LocalPolicyXml)
+            && !string.IsNullOrWhiteSpace(EffectivePolicyXml) && Platform is { Build: > 0, VmEvidence: "Observed" or "NotObserved" }
             && Inventory is not null && Known(Inventory.Local) && Known(Inventory.EffectiveGroupPolicy) && Known(Inventory.CspMdm) && Known(Inventory.Wdac);
         private static bool Known(PolicyPresence presence)
         {

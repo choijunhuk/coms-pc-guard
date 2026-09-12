@@ -15,7 +15,7 @@ namespace Guard.WindowsPoc.Native
             : this(runner, guard, attestation, elevated, EnsureWindows, TimeSpan.FromSeconds(30)) { }
 
         // Friend-test seam changes only platform detection and wait duration. The real runner independently
-        // refuses native execution, and this gateway never dispatches a mutation command.
+        // verifies script trust independently, and this gateway never dispatches a mutation command.
         internal AppLockerNativeGateway(IWindowsCommandRunner runner, PolicyMutationGuard guard, VmAttestationResult attestation, bool elevated, Action ensureWindows, TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(runner);

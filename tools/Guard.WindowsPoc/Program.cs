@@ -21,6 +21,7 @@ try
         return (int)PocExitCode.Unavailable;
     }
 
+    // Raw native XML and identities remain internal; the public evidence writer emits hashes only.
     await new PocEvidenceWriter(Console.Out).WriteAsync(PocExitCode.Success, "", snapshot.LocalPolicyXml);
     return (int)PocExitCode.Success;
 }

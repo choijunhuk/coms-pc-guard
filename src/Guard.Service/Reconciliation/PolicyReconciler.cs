@@ -84,7 +84,7 @@ namespace Guard.Service.Reconciliation
                         await _store.CommitObservedSuccessAsync(attempt.AttemptId, current, confirmedAt, cancellationToken).ConfigureAwait(false);
                         return new(ReconciliationOutcomeKind.Applied);
                     }
-                    failure = "ObservationMismatch";
+                    failure = ObservationMismatchDiagnostic(desired, current, "ObservationMismatch");
                 }
 
                 diagnostic = "StoreFailed";
@@ -169,7 +169,7 @@ namespace Guard.Service.Reconciliation
                 DateTimeOffset confirmedAt = _clock.GetUtcNow();
                 if (!PolicyConfirmationPolicy.IsConfirmed(artifact, current, confirmedAt))
                 {
-                    return new(ReconciliationOutcomeKind.RecoveryFailed, "RestoreObservationMismatch");
+                    return new(ReconciliationOutcomeKind.RecoveryFailed, ObservationMismatchDiagnostic(artifact, current, "RestoreObservationMismatch"));
                 }
                 diagnostic = "StoreFailed";
                 await _store.CompleteRestoredLastGoodAsync(attempt.AttemptId, current, "RESTORED_LAST_GOOD", confirmedAt, cancellationToken).ConfigureAwait(false);
@@ -274,7 +274,7 @@ namespace Guard.Service.Reconciliation
                 DateTimeOffset confirmedAt = _clock.GetUtcNow();
                 if (!PolicyConfirmationPolicy.IsConfirmed(desired, observation, confirmedAt))
                 {
-                    return new(ReconciliationOutcomeKind.RecoveryRequired, "ObservationMismatch");
+                    return new(ReconciliationOutcomeKind.RecoveryRequired, ObservationMismatchDiagnostic(desired, observation, "ObservationMismatch"));
                 }
                 diagnostic = "StoreFailed";
                 await _store.CommitObservedSuccessAsync(attempt.AttemptId, observation, confirmedAt, cancellationToken).ConfigureAwait(false);
@@ -284,6 +284,13 @@ namespace Guard.Service.Reconciliation
             {
                 return new(ReconciliationOutcomeKind.RecoveryRequired, diagnostic, exception);
             }
+        }
+
+        private static string ObservationMismatchDiagnostic(PolicyArtifact artifact, EffectivePolicyObservation? observation, string fallback)
+        {
+            return observation is not null && !PolicyConfirmationPolicy.SatisfiesProtection(artifact.RequiredProtection, observation.ProtectionLevel)
+                ? "ProtectionLevelMismatch"
+                : fallback;
         }
     }
 }

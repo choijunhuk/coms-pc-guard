@@ -131,6 +131,24 @@ namespace Guard.Service.Tests.Reconciliation
         }
 
         [TestMethod]
+        public async Task ProtectionDowngradeReturnsStableDiagnostic()
+        {
+            await using TemporarySqliteDatabase db = new();
+            SqlitePolicyStateStore store = Store(db);
+            await store.InitializeAsync(CancellationToken.None);
+            PolicyArtifact desired = Artifact();
+            ScriptedEnforcementAdapter adapter = Adapter(desired);
+            adapter.Observe = _ => Task.FromResult(Observation(desired, protection: EnforcementProtectionLevel.PostLaunchTermination));
+            using PolicyOperationGate gate = new();
+
+            ReconciliationOutcome outcome = await Reconciler(store, adapter, gate).ReconcileAsync(desired, CancellationToken.None);
+
+            Assert.AreEqual(ReconciliationOutcomeKind.RecoveryRequired, outcome.Kind);
+            Assert.AreEqual("ProtectionLevelMismatch", outcome.DiagnosticCode);
+            Assert.AreEqual(ReconciliationPhase.ApplyReported, (await store.GetPendingAttemptAsync(CancellationToken.None))!.Phase);
+        }
+
+        [TestMethod]
         [DataRow(EnforcementMutationStatus.NoChange, ReconciliationOutcomeKind.Rejected)]
         [DataRow(EnforcementMutationStatus.Changed, ReconciliationOutcomeKind.RecoveryRequired)]
         [DataRow(EnforcementMutationStatus.Unknown, ReconciliationOutcomeKind.RecoveryRequired)]

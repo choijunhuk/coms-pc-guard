@@ -538,6 +538,52 @@ namespace Guard.Service.Tests.Storage
         }
 
         [TestMethod]
+        [DataRow("desired")]
+        [DataRow("restore")]
+        [DataRow("observation")]
+        public async Task FractionalPolicyVersionIsRejectedWithoutTruncation(string path)
+        {
+            await using TemporarySqliteDatabase database = new();
+            SqlitePolicyStateStore store = Store(database);
+            await store.InitializeAsync(CancellationToken.None);
+            Func<Task> read;
+            string table;
+            string column;
+            string predicate = string.Empty;
+            if (path == "desired")
+            {
+                await store.SaveCandidateAndBeginAttemptAsync(Artifact(), Attempt(Artifact()), CancellationToken.None);
+                table = "reconciliation_attempts";
+                column = "policy_version";
+                read = () => store.GetPendingAttemptAsync(CancellationToken.None);
+            }
+            else if (path == "restore")
+            {
+                await Commit(store, Artifact());
+                PolicyArtifact lastGood = (await store.GetLastGoodArtifactAsync(CancellationToken.None))!;
+                PolicyArtifact desired = Artifact(2);
+                ReconciliationAttempt attempt = Attempt(desired);
+                await store.SaveCandidateAndBeginAttemptAsync(desired, attempt, CancellationToken.None);
+                await store.PrepareRestoreAsync(attempt.AttemptId, lastGood, "Restore", CancellationToken.None);
+                table = "reconciliation_attempts";
+                column = "restore_policy_version";
+                predicate = " WHERE policy_version=2";
+                read = () => store.GetPendingAttemptAsync(CancellationToken.None);
+            }
+            else
+            {
+                await Commit(store, Artifact());
+                table = "applied_observations";
+                column = "policy_version";
+                read = () => store.GetLastGoodObservationAsync(CancellationToken.None);
+            }
+
+            await Corrupt(database, $"UPDATE {table} SET {column}=1.5{predicate}");
+            Assert.AreEqual(1L, await Count(database, $"SELECT count(*) FROM {table} WHERE typeof({column})='real'"));
+            _ = await Assert.ThrowsExactlyAsync<InvalidDataException>(read);
+        }
+
+        [TestMethod]
         public async Task TerminalCompletionBeforeApplyReportIsRejectedOnRead()
         {
             await using TemporarySqliteDatabase database = new();

@@ -305,6 +305,25 @@ namespace Guard.Service.Tests.Reconciliation
         }
 
         [TestMethod]
+        public async Task RestoreProtectionDowngradeReturnsStableDiagnostic()
+        {
+            await using TemporarySqliteDatabase db = new();
+            ReconciliationAttempt pending = await Seed(db, true);
+            SqlitePolicyStateStore store = Store(db);
+            PolicyArtifact lastGood = (await store.GetLastGoodArtifactAsync(default))!;
+            await store.PrepareRestoreAsync(pending.AttemptId, lastGood, "Restore", default);
+            ScriptedEnforcementAdapter adapter = Adapter();
+            adapter.Observe = _ => Task.FromResult(new EffectivePolicyObservation(Guid.NewGuid(), 1, lastGood.Sha256Hex, Now, EnforcementProtectionLevel.PostLaunchTermination, OwnedPolicyState.Present, true, "{}"));
+            using PolicyOperationGate gate = new();
+
+            ReconciliationOutcome outcome = await Recover(Coordinator(db, adapter, gate));
+
+            Assert.AreEqual("RecoveryFailed", outcome.Kind.ToString());
+            Assert.AreEqual("ProtectionLevelMismatch", outcome.DiagnosticCode);
+            Assert.AreEqual(ReconciliationPhase.RestoreApplyReported, (await store.GetPendingAttemptAsync(default))!.Phase);
+        }
+
+        [TestMethod]
         [DataRow("validation", ReconciliationPhase.RestorePrepared)]
         [DataRow("apply", ReconciliationPhase.RestorePrepared)]
         [DataRow("observation", ReconciliationPhase.RestoreApplyReported)]
@@ -439,7 +458,18 @@ namespace Guard.Service.Tests.Reconciliation
             Task completed = await Task.WhenAny(entered.Task, first);
             if (completed == first)
             {
-                _ = await first;
+                string detail;
+                try
+                {
+                    ReconciliationOutcome outcome = await first;
+                    detail = $"outcome {outcome.Kind} ({outcome.DiagnosticCode ?? "no diagnostic"})";
+                }
+                catch (Exception exception)
+                {
+                    detail = $"exception {exception.GetType().Name}: {exception.Message}";
+                }
+
+                Assert.Fail($"First operation completed before signaling rendezvous entry: {detail}");
             }
 
             await entered.Task;

@@ -4,7 +4,7 @@ COMS PC Guard is a planned Windows 11 tool for restricting approved game and lau
 
 ## Current status
 
-The portable Core policy, application identity, and `Guard.Service` persistence/reconciliation slices are complete. PR #5 is merged with hosted clean run `34701889964`; local full suites pass 235/235 in both default and `TZ=UTC` runs (Core 110, Service 125). `Guard.Service` is a class library, not an installed/running Windows Service. Windows enforcement, evidence collection, installer, UI, and native recovery remain blocked.
+The portable Core policy, application identity, and `Guard.Service` persistence/reconciliation slices are complete. PR #5 is merged with hosted clean run `34701889964`; local full suites pass 242/242 in both default and `TZ=UTC` runs (Core 117, Service 125). `Guard.Service` is a class library, not an installed/running Windows Service. Windows enforcement, evidence collection, installer, UI, and native recovery remain blocked.
 
 ## Repository map
 
@@ -29,4 +29,4 @@ TZ=UTC $SDK test ComsPcGuard.sln -c Release --no-build --no-restore --logger "co
 git diff --check
 ```
 
-The current matrix is 235/235 per timezone run (Core 110, Service 125). Identity matching uses AND within each approved Publisher/PackagedApp identity and OR across explicit approved identities; discovery remains Owner-confirmed. macOS and hosted-runner evidence proves only portable behavior. Next action is AppLocker preview/compiler plus Windows evidence-provider interfaces; no UI until Phase B.
+The current matrix is 242/242 per timezone run (Core 117, Service 125). Identity matching uses AND within each approved Publisher/PackagedApp identity and OR across explicit approved identities; discovery remains Owner-confirmed. macOS and hosted-runner evidence proves only portable behavior. Next action is AppLocker preview/compiler plus Windows evidence-provider interfaces; no UI until Phase B.

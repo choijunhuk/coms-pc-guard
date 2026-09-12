@@ -4,7 +4,7 @@
 - **Bootstrap — reproducible repository:** complete.
 - **Core policy:** merged in PR #4; hosted clean run 34692272375 confirms the portable slice.
 - **Persistence/reconciliation:** complete; PR #5 merged with hosted clean run `34701889964`.
-- **Application identity:** portable identity contracts, strict matcher, discovery/update workflow, cache policy, and process-target verification are complete and PASS locally (Core 110, Service 125; 235/235 per timezone run).
+- **Application identity:** portable identity contracts, strict matcher, discovery/update workflow, cache policy, and process-target verification are complete and PASS locally (Core 117, Service 125; 242/242 per timezone run).
 - **Next — AppLocker preview/compiler and Windows evidence-provider interfaces:** define the preview/compiler boundary and provider contracts, then prove them in an approved isolated Windows VM. No UI until Phase B.
 - **Windows enforcement PoC:** `BLOCKED_WINDOWS_VM` until ten harmless-fixture scenarios cover AppLocker, temporary allowance, coexistence, recovery, and observed policy.
 - **Owner, IPC, ACL, recovery; Admin/Notifier; MSI lifecycle:** remain gated on the Windows enforcement contract and WiX `wix7` EULA acceptance.

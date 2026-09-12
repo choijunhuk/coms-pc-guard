@@ -25,7 +25,7 @@ Core performance tests observed active-grant and schedule p95 below the `<= 5 ms
 
 ## Hosted history and boundary
 
-PR #6 is the merged application-identity run; hosted run `34708235735` is identity evidence only. The current AppLocker compiler/XML evidence is local and pending its own PR/CI. Hosted/macOS results prove portable behavior only. Neither proves Windows evidence collection/signature verification, AppLocker application, AppIDSvc changes, SID/token proof, GPO/CSP coexistence, blocking, reboot, rollback, Windows service registration, ACL/IPC/UI, installer, or real process termination.
+PR #6/run `34708235735` is the merged application-identity evidence. PR #7/run `34710288258` is the merged AppLocker preview/compiler evidence; portable and windows-compile jobs passed. Hosted/macOS results prove portable behavior only. Neither proves Windows evidence collection/signature verification, AppLocker application, AppIDSvc changes, SID/token proof, GPO/CSP coexistence, blocking, reboot, rollback, Windows service registration, ACL/IPC/UI, installer, or real process termination.
 
 ## Identity and native boundary
 

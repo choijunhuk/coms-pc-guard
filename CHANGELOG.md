@@ -14,4 +14,4 @@ All notable changes to this project are documented here; no release claim is mad
 ### Security
 
 - Windows enforcement, AppLocker, Application Identity, ACL/session, installer, and native recovery remain blocked pending isolated Windows evidence. WiX v7 eligibility is recorded, but `wix7` EULA acceptance is still pending.
-- Application identity PR #6 hosted clean run `34708235735`; AppLocker preview remains local pending its own PR/CI. Local 265/265 full tests pass in default and `TZ=UTC`. The 2026-09-13 physical Windows inventory is read-only context only and is not an authorized VM. Native apply and all Windows evidence gates remain `BLOCKED_WINDOWS_VM`.
+- Application identity PR #6/run `34708235735` and AppLocker preview PR #7/run `34710288258` are merged with clean hosted checks. Local 265/265 full tests pass in default and `TZ=UTC`. The 2026-09-13 physical Windows inventory is read-only context only and is not an authorized VM. Native apply and all Windows evidence gates remain `BLOCKED_WINDOWS_VM`.

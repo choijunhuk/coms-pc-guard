@@ -11,6 +11,20 @@ namespace Guard.WindowsPoc.Tests.Native
         {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"r1","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
         """;
 
+        [TestMethod]
+        [DataRow("<AppLockerPolicy Version=\"1\" />", "635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15")]
+        [DataRow("<AppLockerPolicy Version=\"1\"></AppLockerPolicy>", "00C785D262C6873D62CC0FDFCC5F120D91EC687939708E3BDCB0AB136F0918C4")]
+        public void CapturedRawHashPreservesXmlBytesBeforeCanonicalization(string xml, string expectedHash)
+        {
+            JsonObject input = JsonNode.Parse(Complete)!.AsObject();
+            input["LocalPolicyXml"] = xml;
+            // Untrusted output cannot supply its own provenance hash.
+            input["RawLocalPolicySha256"] = new string('F', 64);
+            AppLockerNativeSnapshot snapshot = PowerShellCommandRunner.ParseSnapshot(input.ToJsonString());
+            JsonObject output = System.Text.Json.JsonSerializer.SerializeToNode(snapshot)!.AsObject();
+            Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
+        }
+
         private static System.Diagnostics.ProcessStartInfo Shell(string command, params string[] arguments)
         {
             System.Diagnostics.ProcessStartInfo info = new("/bin/sh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };

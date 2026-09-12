@@ -84,6 +84,16 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task CompilerDecisionAloneCannotCreatePayloadBeforeJournalAuthorization()
+        {
+            WindowsPoc.Safety.PolicyMutationDecision decision = PolicyMutationGuardTests.Guard.Evaluate(
+                PolicyMutationGuardTests.Attestation, PolicyMutationGuardTests.Snapshot, true);
+            Assert.IsTrue(decision.Allowed);
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => PowerShellCommandRunner.CreateLockedPayloadAsync(
+                new(WindowsCommand.Apply, PolicyMutationGuardTests.Xml, decision), CancellationToken.None));
+        }
+
+        [TestMethod]
         public async Task RefusesNativeCallsOnNonWindows()
         {
             if (OperatingSystem.IsWindows())
@@ -97,7 +107,6 @@ namespace Guard.WindowsPoc.Tests.Native
             _ = await Assert.ThrowsAsync<PlatformNotSupportedException>(() => gateway.ObserveAsync());
             _ = await Assert.ThrowsAsync<PlatformNotSupportedException>(() => gateway.RestoreAsync(PolicyMutationGuardTests.Snapshot));
             _ = await Assert.ThrowsAsync<PlatformNotSupportedException>(() => gateway.CleanupAsync(PolicyMutationGuardTests.Snapshot));
-            _ = await Assert.ThrowsAsync<PlatformNotSupportedException>(() => PowerShellCommandRunner.CreateLockedPayloadAsync(new(WindowsCommand.Apply, PolicyMutationGuardTests.Xml, PolicyMutationGuardTests.Guard.Evaluate(PolicyMutationGuardTests.Attestation, PolicyMutationGuardTests.Snapshot, true)), CancellationToken.None));
         }
 
         [TestMethod]

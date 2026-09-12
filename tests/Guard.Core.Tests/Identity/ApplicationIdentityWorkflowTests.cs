@@ -45,6 +45,52 @@ namespace Guard.Core.Tests.Identity
         }
 
         [TestMethod]
+        public void Create_HashEvidence_ProposesOnlyTheExactEvidenceDerivedIdentity()
+        {
+            FileHashApplicationEvidence evidence = new(HashA);
+
+            RegistrationProposal proposal = CandidateProposalFactory.Create(Candidate(evidence), "hash");
+
+            Assert.IsTrue(proposal.RequiresOwnerConfirmation);
+            Assert.HasCount(1, proposal.ProposedIdentities);
+            FileHashApplicationIdentity identity = (FileHashApplicationIdentity)proposal.ProposedIdentities[0];
+            Assert.AreEqual("hash", identity.IdentityId);
+            Assert.AreEqual(evidence.Sha256, identity.Sha256);
+        }
+
+        [TestMethod]
+        public void Create_VerifiedPackageEvidence_ProposesOnlyTheExactEvidenceDerivedIdentity()
+        {
+            PackagedApplicationEvidence evidence = PackageEvidence();
+
+            RegistrationProposal proposal = CandidateProposalFactory.Create(Candidate(evidence), "package");
+
+            Assert.IsTrue(proposal.RequiresOwnerConfirmation);
+            Assert.HasCount(1, proposal.ProposedIdentities);
+            PackagedApplicationIdentity identity = (PackagedApplicationIdentity)proposal.ProposedIdentities[0];
+            Assert.AreEqual("package", identity.IdentityId);
+            Assert.AreEqual(evidence.PublisherId, identity.PublisherId);
+            Assert.AreEqual(evidence.PackageFamilyName, identity.PackageFamilyName);
+            Assert.AreEqual(evidence.ApplicationUserModelId, identity.ApplicationUserModelId);
+        }
+
+        [TestMethod]
+        public void Construct_RegistrationProposal_SnapshotsInputsAndProtectsOutputCollections()
+        {
+            List<ApplicationIdentity> identities = [new FileHashApplicationIdentity("hash", HashA)];
+            List<string> warnings = ["warning"];
+
+            RegistrationProposal proposal = new(identities, warnings);
+            identities.Clear();
+            warnings.Clear();
+
+            Assert.HasCount(1, proposal.ProposedIdentities);
+            Assert.HasCount(1, proposal.Warnings);
+            _ = Assert.ThrowsExactly<NotSupportedException>(() => ((IList)proposal.ProposedIdentities).Add(new FileHashApplicationIdentity("other", HashB)));
+            _ = Assert.ThrowsExactly<NotSupportedException>(() => ((IList)proposal.Warnings).Add("other"));
+        }
+
+        [TestMethod]
         public void Create_UntrustedPublisherAndFailedPackageEvidence_ProduceWarningsWithoutProposals()
         {
             RegistrationProposal untrusted = CandidateProposalFactory.Create(Candidate(PublisherEvidence(trust: SignatureTrust.Untrusted)), "publisher");

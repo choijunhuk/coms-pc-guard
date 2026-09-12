@@ -16,7 +16,7 @@
 | Suite | Default timezone | `TZ=UTC` |
 | --- | ---: | ---: |
 | `Guard.Core.Tests` | 110/110 passed | 110/110 passed |
-| `Guard.Service.Tests` | 120/120 passed | 120/120 passed |
+| `Guard.Service.Tests` | 125/125 passed | 125/125 passed |
 | **Total** | **235/235 passed** | **235/235 passed** |
 
 Application identity focused totals: contracts 26, matcher 7, workflow 10, cache 3, process 7; all pass. (The full Core total is 110.)

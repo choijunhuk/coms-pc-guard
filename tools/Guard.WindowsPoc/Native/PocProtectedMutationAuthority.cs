@@ -105,6 +105,13 @@ namespace Guard.WindowsPoc.Native
             return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.ValidationComplete, token);
         }
 
+        internal static void RevalidateIssuedAuthorization(IPocMutationAuthorization authorization)
+        {
+            if (authorization is not PocMutationAuthorization issued)
+            { throw new InvalidOperationException("Protected mutation authorization refused."); }
+            issued.Revalidate();
+        }
+
         private async Task SetNativeWriteBarrierAsync(PocTransactionJournal journal, PocRecoveryBarrier barrier, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);

@@ -291,7 +291,7 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
-        public async Task AuthorizedApplyRunsFixedMutationScriptWithExpectedHashes()
+        public async Task FakeAuthorizationCannotReachFixedMutationScriptOrPayloadDispatch()
         {
             Trust trust = new();
             PocTransactionJournal journal = PocTransactionJournal.Prepare(
@@ -301,32 +301,18 @@ namespace Guard.WindowsPoc.Tests.Native
                 "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
             IPocMutationAuthorization authorization = new FakeAuthorization(journal, Restore: false,
                 journal.Before.RawLocalPolicySha256!, journal.After.LocalHash, journal.After.LocalPolicyXml);
-            string? payloadPath = null;
             PowerShellCommandRunner runner = new(trust, (info, token) =>
             {
-                Assert.IsTrue(trust.Checked);
-                Assert.IsFalse(trust.Disposed);
-                Assert.IsFalse(info.UseShellExecute);
-                Assert.Contains(@"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", info.ArgumentList);
-                Assert.Contains("-PolicyPath", info.ArgumentList);
-                Assert.Contains("-ExpectedCurrentSha256", info.ArgumentList);
-                Assert.Contains(journal.Before.LocalHash, info.ArgumentList);
-                Assert.Contains("-ExpectedPayloadSha256", info.ArgumentList);
-                Assert.Contains(journal.After.LocalHash, info.ArgumentList);
-                payloadPath = info.ArgumentList[info.ArgumentList.IndexOf("-PolicyPath") + 1];
-                Assert.StartsWith(@"C:\ProgramData\ComsPcGuardPoc\", payloadPath);
-                Assert.EndsWith(".xml", payloadPath);
-                Assert.DoesNotContain("AppLockerPolicy", string.Join(" ", info.ArgumentList));
-                Assert.IsTrue(token.CanBeCanceled);
-                return Task.FromResult(/*lang=json,strict*/ "{\"Status\":\"Applied\"}");
+                throw new AssertFailedException("Fake authorization reached native mutation dispatch");
             });
-            Assert.IsNull((await runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None)).Snapshot);
-            Assert.IsNotNull(payloadPath);
-            Assert.IsTrue(trust.Disposed);
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+            Assert.IsFalse(trust.Checked);
+            Assert.IsFalse(trust.Disposed);
         }
 
         [TestMethod]
-        public async Task AuthorizedApplyRevalidatesProtectedScopeThroughDispatch()
+        public async Task FakeAuthorizationCannotReachProtectedScopeRevalidationOrDispatch()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(
                 Snapshot("<AppLockerPolicy Version=\"1\" />"),
@@ -341,11 +327,11 @@ namespace Guard.WindowsPoc.Tests.Native
                 });
             PowerShellCommandRunner runner = new(new Trust(), (_, _) => throw new AssertFailedException("Child started after scope release"));
             _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
-            Assert.IsTrue(revalidations > 1);
+            Assert.AreEqual(0, revalidations);
         }
 
         [TestMethod]
-        public async Task NativeDriftResultIsStickyTypedRefusal()
+        public async Task FakeAuthorizationCannotReachNativeDriftResultParsing()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(
                 Snapshot("<AppLockerPolicy Version=\"1\" />"),
@@ -355,7 +341,7 @@ namespace Guard.WindowsPoc.Tests.Native
             IPocMutationAuthorization authorization = new FakeAuthorization(journal, Restore: false,
                 journal.Before.RawLocalPolicySha256!, journal.After.LocalHash, journal.After.LocalPolicyXml);
             PowerShellCommandRunner runner = new(new Trust(), (_, _) => Task.FromResult(/*lang=json,strict*/ "{\"Status\":\"DRIFT\"}"));
-            _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
         }
 
         [TestMethod]

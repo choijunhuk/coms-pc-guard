@@ -7,9 +7,9 @@ namespace Guard.WindowsPoc.Execution
     internal sealed class NativePocPolicyGateway : IPocPolicyGateway
     {
         private readonly IWindowsCommandRunner _runner;
-        private readonly IPocProtectedMutationAuthority? _authority;
+        private readonly PocProtectedMutationAuthority? _authority;
 
-        internal NativePocPolicyGateway(IWindowsCommandRunner runner, IPocProtectedMutationAuthority? authority = null)
+        internal NativePocPolicyGateway(IWindowsCommandRunner runner, PocProtectedMutationAuthority? authority = null)
         {
             _runner = runner;
             _authority = authority;
@@ -25,13 +25,7 @@ namespace Guard.WindowsPoc.Execution
         {
             ArgumentNullException.ThrowIfNull(journal);
             if (_authority is null) { throw new InvalidOperationException("Protected mutation authorization is required."); }
-            await _authority.PrearmNativeRecheckAsync(journal, token).ConfigureAwait(false);
-            AppLockerPolicySnapshot fresh = await CaptureAsync(token).ConfigureAwait(false);
-            IPocMutationAuthorization authorization = await _authority.AuthorizeAsync(journal, restore, fresh, token).ConfigureAwait(false);
-            WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
-            await _authority.MarkNativeWriteInFlightAsync(journal, token).ConfigureAwait(false);
-            _ = await _runner.RunAsync(request, token).ConfigureAwait(false);
-            await _authority.MarkNativeWriteVerifiedAsync(journal, token).ConfigureAwait(false);
+            await NativePocPolicyWriteOrchestrator.WriteAsync(_runner, _authority, Convert, journal, restore, token).ConfigureAwait(false);
         }
 
         public Task<bool> ProbeAsync(CancellationToken token)

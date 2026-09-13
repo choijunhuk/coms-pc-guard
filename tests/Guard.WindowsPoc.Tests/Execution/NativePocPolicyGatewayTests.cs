@@ -140,8 +140,8 @@ namespace Guard.WindowsPoc.Tests.Execution
                 await store.SaveAsync(journal, CancellationToken.None);
                 await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, CancellationToken.None);
                 DriftOnMutationRunner runner = new();
-                NativePocPolicyGateway gateway = new(runner, new StoreBackedFakeAuthority(store));
-                _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
+                _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => NativePocPolicyWriteOrchestrator.WriteAsync(runner,
+                    new StoreBackedFakeAuthority(store), ConvertForTest, journal, restore: false, CancellationToken.None));
                 Assert.AreEqual(PocRecoveryBarrier.NativeWriteInFlight, await store.ReadRecoveryBarrierAsync(CancellationToken.None));
             }
             finally { File.Delete(path); }
@@ -307,9 +307,21 @@ namespace Guard.WindowsPoc.Tests.Execution
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
             RecordingRunner runner = new(CompleteFor(First.LocalPolicyXml, "E000000000000000000000000000000000000000000000000000000000000001"));
-            NativePocPolicyGateway gateway = new(runner, new PassthroughFakeAuthority());
-            await gateway.WriteAsync(journal, restore: true, CancellationToken.None);
+            await NativePocPolicyWriteOrchestrator.WriteAsync(runner, new PassthroughFakeAuthority(), ConvertForTest,
+                journal, restore: true, CancellationToken.None);
             CollectionAssert.AreEqual(new[] { WindowsCommand.Capture, WindowsCommand.Restore }, runner.Requests.Select(request => request.Command).ToArray());
+        }
+
+        [TestMethod]
+        public void ProductionGatewayConstructorsDoNotAcceptFakeAuthorityInterfaces()
+        {
+            ConstructorInfo[] constructors = typeof(NativePocPolicyGateway)
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            Assert.IsFalse(constructors.Any(constructor => constructor.GetParameters()
+                .Any(parameter => parameter.ParameterType == typeof(IPocProtectedMutationAuthority)
+                    || parameter.ParameterType == typeof(IPocMutationAuthorization))));
+            Assert.IsTrue(constructors.Any(constructor => constructor.GetParameters()
+                .Any(parameter => parameter.ParameterType == typeof(PocProtectedMutationAuthority))));
         }
 
         [TestMethod]
@@ -560,6 +572,15 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             return new(Now, xml, xml, PolicyPresence.Absent, PolicyPresence.Absent, true, true)
             { RawLocalPolicySha256 = PolicyMutationDecision.Hash(xml) };
+        }
+
+        private static AppLockerPolicySnapshot ConvertForTest(WindowsCommandResult result)
+        {
+            AppLockerNativeSnapshot snapshot = result.Snapshot is { IsComplete: true } complete
+                ? complete : throw new InvalidOperationException("Native inventory unavailable.");
+            return new(snapshot.CapturedAtUtc, snapshot.LocalPolicyXml, snapshot.EffectivePolicyXml!,
+                snapshot.Inventory.CspMdm, snapshot.Inventory.Wdac, snapshot.AppIdServiceRunning, snapshot.AppIdServiceAutomatic)
+            { NativeRevision = snapshot.Revision, RawLocalPolicySha256 = snapshot.RawLocalPolicySha256 };
         }
 
         private static async Task WithGatewayAsync(PocTransactionJournal journal, string captureJson,

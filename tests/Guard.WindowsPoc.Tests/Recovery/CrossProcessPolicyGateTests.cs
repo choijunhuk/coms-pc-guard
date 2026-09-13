@@ -8,6 +8,7 @@ namespace Guard.WindowsPoc.Tests.Recovery
     public sealed class CrossProcessPolicyGateTests
     {
         private const string Owner = "S-1-5-21-1-2-3-1001";
+        private const string SystemSid = "S-1-5-18";
 
         [TestMethod]
         [DataRow(Owner, false, true)]
@@ -45,8 +46,21 @@ namespace Guard.WindowsPoc.Tests.Recovery
         public void NativeOwnerAttestationRejectsSystemOrOtherTokenIdentity()
         {
             CrossProcessPolicyGate.ValidateOwnerIdentity(Owner, Owner);
-            foreach (string? identity in new[] { null, "S-1-5-18", "S-1-5-32-544", "S-1-5-21-1-2-3-1002" })
+            foreach (string? identity in new[] { null, SystemSid, "S-1-5-32-544", "S-1-5-21-1-2-3-1002" })
             { _ = Assert.ThrowsExactly<InvalidOperationException>(() => CrossProcessPolicyGate.ValidateOwnerIdentity(Owner, identity)); }
+        }
+
+        [TestMethod]
+        public void PolicyGateCreationOwnerUsesValidatedCurrentPrincipal()
+        {
+            Assert.AreEqual(Owner, CrossProcessPolicyGate.ValidateNativeOwnerAndReadPrincipal(Owner, () => false, () => Owner));
+            Assert.AreEqual(SystemSid, CrossProcessPolicyGate.ValidateCreationOwner(Owner, SystemSid));
+            Assert.AreEqual(Owner, CrossProcessPolicyGate.ValidateCreationOwner(Owner, Owner));
+
+            foreach (string? principal in new[] { null, "S-1-5-32-544", "S-1-5-21-1-2-3-1002" })
+            {
+                _ = Assert.ThrowsExactly<InvalidOperationException>(() => CrossProcessPolicyGate.ValidateCreationOwner(Owner, principal));
+            }
         }
 
         [TestMethod]
@@ -54,11 +68,12 @@ namespace Guard.WindowsPoc.Tests.Recovery
         {
             OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab", new string('a', 64));
             OwnerTokenPolicyGateCapability accepted = CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
-                () => new OwnerTokenAttestationContext("S-1-5-18", false, true, proof));
+                () => new OwnerTokenAttestationContext(SystemSid, false, true, proof));
             _ = new CrossProcessPolicyGate(accepted);
+            Assert.AreEqual(SystemSid, accepted.RevalidateNativePrincipal().CurrentPrincipalSid);
 
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName,
-                proof.VmIdentityHash, () => new OwnerTokenAttestationContext("S-1-5-18", false, true, proof with { AclVerified = false })));
+                proof.VmIdentityHash, () => new OwnerTokenAttestationContext(SystemSid, false, true, proof with { AclVerified = false })));
         }
 
         private static OwnerTokenPolicyGateCapability CapabilityForTest(string ownerSid, string nonce, string vmName,
@@ -144,8 +159,9 @@ namespace Guard.WindowsPoc.Tests.Recovery
         [TestMethod]
         public void SecurityAllowlistRejectsOtherAccountsGroupsAndUnknownAcls()
         {
-            PolicyGateAccess[] allowed = [new("S-1-5-18", 0x120001), new(Owner, 0x120001)];
+            PolicyGateAccess[] allowed = [new(SystemSid, 0x120001), new(Owner, 0x120001)];
             CrossProcessPolicyGate.ValidateSecurity(Owner, Owner, true, allowed);
+            CrossProcessPolicyGate.ValidateSecurity(Owner, SystemSid, true, allowed);
             foreach (string sid in new[] { "S-1-1-0", "S-1-5-32-544", "S-1-5-32-545", "S-1-5-11", "S-1-5-21-1-2-3-1002" })
             {
                 _ = Assert.ThrowsExactly<InvalidOperationException>(() => CrossProcessPolicyGate.ValidateSecurity(Owner, Owner, true, [.. allowed, new(sid, 1)]));

@@ -160,6 +160,27 @@ namespace Guard.WindowsPoc.Tests.Safety
         }
 
         [TestMethod]
+        public void VmIdentityHashIncludesPerVmSystemUuid()
+        {
+            string[] sharedVirtualBoxPlatform =
+            [
+                "innotek GmbH",
+                "VirtualBox",
+                "Oracle Corporation",
+                "VirtualBox",
+                "innotek GmbH",
+                "VirtualBox"
+            ];
+
+            string first = OwnerTokenAttestation.ComputeVmIdentityHash(sharedVirtualBoxPlatform, "11111111-2222-3333-4444-555555555555");
+            string second = OwnerTokenAttestation.ComputeVmIdentityHash(sharedVirtualBoxPlatform, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+            Assert.AreEqual(64, first.Length);
+            Assert.AreNotEqual(first, second);
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ComputeVmIdentityHash(sharedVirtualBoxPlatform, "00000000-0000-0000-0000-000000000000"));
+        }
+
+        [TestMethod]
         public void VmMarkerRejectsMemberOwnedProtectedSystemWritableFile()
         {
             OwnerTokenPathEvidence[] memberOwnedMarker =

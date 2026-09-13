@@ -12,7 +12,9 @@ namespace Guard.WindowsPoc.Safety
 {
     internal sealed record OwnerTokenProofPayload(string OwnerSid, string OwnerTokenSid, string Nonce, string ExpectedVmName, string VmIdentityHash);
     internal sealed record OwnerTokenAceEvidence(string Sid, int AccessMask, bool Allow, bool InheritOnly, bool Callback);
-    internal sealed record OwnerTokenNativeVmBinding(string Nonce, string ExpectedVmName, string VmIdentityHash);
+    internal sealed record OwnerTokenNativeVmBinding(string Nonce, string ExpectedVmName, string VmIdentityHash, string SystemUuid);
+    internal sealed record OwnerTokenNativePrincipal(string OwnerSid, string CurrentPrincipalSid);
+    internal sealed record OwnerTokenVmIdentity(string VmIdentityHash, string SystemUuid);
 
     internal sealed record OwnerTokenPathEvidence(
         string Role,
@@ -118,9 +120,16 @@ namespace Guard.WindowsPoc.Safety
 
         internal string Revalidate()
         {
+            return RevalidateNativePrincipal().OwnerSid;
+        }
+
+        internal OwnerTokenNativePrincipal RevalidateNativePrincipal()
+        {
             OwnerTokenAttestationResult result = OwnerTokenAttestation.Evaluate(OwnerSid, _expectedNonce, _expectedVmName,
                 _expectedVmIdentityHash, _readNativeContext());
-            return result.AllowsPolicyGate ? OwnerSid : throw new InvalidOperationException("Designated Owner or protected SYSTEM Owner-token attestation required.");
+            return result.AllowsPolicyGate
+                ? new(OwnerSid, result.UsesSystemProof ? "S-1-5-18" : OwnerSid)
+                : throw new InvalidOperationException("Designated Owner or protected SYSTEM Owner-token attestation required.");
         }
     }
 
@@ -272,10 +281,11 @@ namespace Guard.WindowsPoc.Safety
         internal static OwnerTokenNativeVmBinding ReadNativeVmBinding(string ownerSid, string expectedNonce, string expectedVmName)
         {
             CrossProcessPolicyGate.ValidateOwner(ownerSid);
-            string currentHash = CaptureCurrentVmIdentityHash();
+            OwnerTokenVmIdentity current = CaptureCurrentVmIdentity();
             NativeVmMarker marker = ReadNativeVmMarker(ownerSid);
-            return marker.Nonce == expectedNonce && marker.ExpectedVmName == expectedVmName && marker.VmIdentityHash == currentHash
-                ? new(marker.Nonce, marker.ExpectedVmName, marker.VmIdentityHash) : throw Refused();
+            return marker.Nonce == expectedNonce && marker.ExpectedVmName == expectedVmName
+                && marker.VmIdentityHash == current.VmIdentityHash && marker.SystemUuid == current.SystemUuid
+                ? new(marker.Nonce, marker.ExpectedVmName, marker.VmIdentityHash, marker.SystemUuid) : throw Refused();
         }
 
         [SupportedOSPlatform("windows")]
@@ -292,7 +302,8 @@ namespace Guard.WindowsPoc.Safety
             ];
             _ = ValidateVmMarkerBoundary(ownerSid, paths) ? true : throw Refused();
 
-            return new(envelope.Nonce, envelope.ExpectedVmName, envelope.VmIdentityHash);
+            string systemUuid = NormalizeSystemUuid(envelope.SystemUuid);
+            return new(envelope.Nonce, envelope.ExpectedVmName, envelope.VmIdentityHash, systemUuid);
         }
 
         [SupportedOSPlatform("windows")]
@@ -401,7 +412,7 @@ namespace Guard.WindowsPoc.Safety
         }
 
         [SupportedOSPlatform("windows")]
-        private static string CaptureCurrentVmIdentityHash()
+        private static OwnerTokenVmIdentity CaptureCurrentVmIdentity()
         {
             using RegistryKey? bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
             string[] values =
@@ -413,8 +424,22 @@ namespace Guard.WindowsPoc.Safety
                 ReadRegistryString(bios, "BIOSVendor"),
                 ReadRegistryString(bios, "BIOSVersion")
             ];
-            return !values.Any(string.IsNullOrWhiteSpace)
-                ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("|", values)))).ToLowerInvariant() : throw Refused();
+            string systemUuid = ReadRegistryString(bios, "SystemUUID");
+            return new(ComputeVmIdentityHash(values, systemUuid), NormalizeSystemUuid(systemUuid));
+        }
+
+        internal static string ComputeVmIdentityHash(IReadOnlyList<string> platformValues, string systemUuid)
+        {
+            ArgumentNullException.ThrowIfNull(platformValues);
+            if (platformValues.Any(string.IsNullOrWhiteSpace)) { throw Refused(); }
+            string normalizedUuid = NormalizeSystemUuid(systemUuid);
+            string payload = string.Join("|", [.. platformValues, normalizedUuid]);
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        }
+
+        private static string NormalizeSystemUuid(string systemUuid)
+        {
+            return Guid.TryParse(systemUuid, out Guid uuid) && uuid != Guid.Empty ? uuid.ToString("D").ToLowerInvariant() : throw Refused();
         }
 
         [SupportedOSPlatform("windows")]
@@ -486,7 +511,7 @@ namespace Guard.WindowsPoc.Safety
         }
 
         private sealed record ProofEnvelope(int Version, string OwnerSid, string OwnerTokenSid, string Nonce, string ExpectedVmName, string VmIdentityHash);
-        private sealed record VmMarkerEnvelope(int Version, string Nonce, string ExpectedVmName, string VmIdentityHash);
-        private sealed record NativeVmMarker(string Nonce, string ExpectedVmName, string VmIdentityHash);
+        private sealed record VmMarkerEnvelope(int Version, string Nonce, string ExpectedVmName, string VmIdentityHash, string SystemUuid);
+        private sealed record NativeVmMarker(string Nonce, string ExpectedVmName, string VmIdentityHash, string SystemUuid);
     }
 }

@@ -36,7 +36,7 @@ namespace Guard.WindowsPoc.Recovery
         internal CrossProcessPolicyGate(OwnerTokenPolicyGateCapability capability)
         {
             ArgumentNullException.ThrowIfNull(capability);
-            _ = capability.Revalidate();
+            _ = capability.RevalidateNativePrincipal();
             _timeout = TimeSpan.FromSeconds(30);
             _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(capability) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
         }
@@ -75,8 +75,21 @@ namespace Guard.WindowsPoc.Recovery
 
         internal static void ValidateNativeOwner(string ownerSid, Func<bool> isImpersonating, Func<string?> readProcessSid)
         {
+            _ = ValidateNativeOwnerAndReadPrincipal(ownerSid, isImpersonating, readProcessSid);
+        }
+        internal static string ValidateNativeOwnerAndReadPrincipal(string ownerSid, Func<bool> isImpersonating, Func<string?> readProcessSid)
+        {
             if (isImpersonating()) { throw new InvalidOperationException("Impersonated Owner attestation is not permitted."); }
-            ValidateOwnerIdentity(ownerSid, readProcessSid());
+            string? processSid = readProcessSid();
+            ValidateOwnerIdentity(ownerSid, processSid);
+            return ValidateCreationOwner(ownerSid, processSid);
+        }
+        internal static string ValidateCreationOwner(string ownerSid, string? currentPrincipalSid)
+        {
+            ValidateOwner(ownerSid);
+            return currentPrincipalSid == ownerSid || currentPrincipalSid == "S-1-5-18"
+                ? currentPrincipalSid
+                : throw new InvalidOperationException("Policy gate creation requires a validated Owner or SYSTEM principal.");
         }
         internal static void ValidateSecurity(string ownerSid, string? actualOwner, bool known, IReadOnlyList<PolicyGateAccess> rules)
         {
@@ -131,18 +144,28 @@ namespace Guard.WindowsPoc.Recovery
         {
             internal static NativeMutex Open(string ownerSid)
             {
-                ValidateNativeOwner(ownerSid);
-                return OpenValidated(ownerSid);
+                string creationOwnerSid = ValidateNativeOwnerAndReadPrincipal(ownerSid, () =>
+                {
+                    using WindowsIdentity? impersonated = WindowsIdentity.GetCurrent(ifImpersonating: true);
+                    return impersonated is not null;
+                }, () =>
+                {
+                    using WindowsIdentity? identity = WindowsIdentity.GetCurrent(ifImpersonating: false);
+                    return identity?.User?.Value;
+                });
+                return OpenValidated(ownerSid, creationOwnerSid);
             }
             internal static NativeMutex Open(OwnerTokenPolicyGateCapability capability)
             {
-                return OpenValidated(capability.Revalidate());
+                OwnerTokenNativePrincipal principal = capability.RevalidateNativePrincipal();
+                return OpenValidated(principal.OwnerSid, principal.CurrentPrincipalSid);
             }
-            private static NativeMutex OpenValidated(string ownerSid)
+            private static NativeMutex OpenValidated(string ownerSid, string creationOwnerSid)
             {
+                _ = ValidateCreationOwner(ownerSid, creationOwnerSid);
                 MutexSecurity security = new();
                 security.SetAccessRuleProtection(true, false);
-                security.SetOwner(new SecurityIdentifier(ownerSid));
+                security.SetOwner(new SecurityIdentifier(creationOwnerSid));
                 foreach (string sid in new[] { "S-1-5-18", ownerSid })
                 { security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid), (MutexRights)RequiredRights, AccessControlType.Allow)); }
                 Mutex mutex;

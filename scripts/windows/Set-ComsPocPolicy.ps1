@@ -60,6 +60,7 @@ try {
     Write-Result 'Applied'
     exit 0
 } catch {
-    Write-Result 'Refused'
+    if ($_.Exception.Message -eq 'Drift') { Write-Result 'DRIFT' }
+    else { Write-Result 'Refused' }
     exit 3
 }

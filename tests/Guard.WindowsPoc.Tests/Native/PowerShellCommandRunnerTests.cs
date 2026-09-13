@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Tests.Native
 {
@@ -245,9 +246,6 @@ namespace Guard.WindowsPoc.Tests.Native
             PowerShellCommandRunner runner = new(new Trust(), (_, _) => throw new AssertFailedException("Child started"));
             _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(new(WindowsCommand.Apply), CancellationToken.None));
             _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(new(WindowsCommand.Apply) { Authorization = null }, CancellationToken.None));
-            Assert.IsFalse(PocMutationAuthorization.TryAuthorize(
-                PocTransactionJournal.Prepare(journal.InitialBaseline, journal.Before, journal.After, "owner-proof", "lease", journal.PreparedAtUtc),
-                restore: false, Snapshot("<AppLockerPolicy Version=\"1\" />"), "proof", out _));
         }
 
         [TestMethod]
@@ -259,7 +257,8 @@ namespace Guard.WindowsPoc.Tests.Native
                 Snapshot("<AppLockerPolicy Version=\"1\" />"),
                 Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
                 "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
-            PocMutationAuthorization authorization = PocMutationAuthorization.AuthorizeForTest(journal, restore: false, Snapshot("<AppLockerPolicy Version=\"1\" />"), "proof");
+            IPocMutationAuthorization authorization = new FakeAuthorization(journal, Restore: false,
+                journal.Before.RawLocalPolicySha256!, journal.After.LocalHash, journal.After.LocalPolicyXml);
             string? payloadPath = null;
             PowerShellCommandRunner runner = new(trust, (info, token) =>
             {
@@ -282,6 +281,59 @@ namespace Guard.WindowsPoc.Tests.Native
             Assert.IsNull((await runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None)).Snapshot);
             Assert.IsNotNull(payloadPath);
             Assert.IsTrue(trust.Disposed);
+        }
+
+        [TestMethod]
+        public async Task NativeDriftResultIsStickyTypedRefusal()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            IPocMutationAuthorization authorization = new FakeAuthorization(journal, Restore: false,
+                journal.Before.RawLocalPolicySha256!, journal.After.LocalHash, journal.After.LocalPolicyXml);
+            PowerShellCommandRunner runner = new(new Trust(), (_, _) => Task.FromResult(/*lang=json,strict*/ "{\"Status\":\"DRIFT\"}"));
+            _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+        }
+
+        [TestMethod]
+        public async Task PayloadLeaseMismatchDisposesAndDeletesStagedFile()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            string payload = Path.Combine(directory, "payload.xml");
+            try
+            {
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    PowerShellCommandRunner.CreateRetainedPayloadLeaseAsync(payload, "<AppLockerPolicy Version=\"1\" />",
+                        new string('0', 64), CancellationToken.None));
+                Assert.IsFalse(File.Exists(payload));
+            }
+            finally
+            {
+                if (Directory.Exists(directory)) { Directory.Delete(directory, recursive: true); }
+            }
+        }
+
+        [TestMethod]
+        public async Task PayloadLeaseAllowsConsumerReadButBlocksWritersOnWindows()
+        {
+            if (!OperatingSystem.IsWindows()) { Assert.Inconclusive("Windows share-mode enforcement is required."); }
+            string directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            string payload = Path.Combine(directory, "payload.xml");
+            string xml = "<AppLockerPolicy Version=\"1\" />";
+            try
+            {
+                await using FileStream lease = await PowerShellCommandRunner.CreateRetainedPayloadLeaseAsync(payload, xml,
+                    PolicyMutationDecision.Hash(xml), CancellationToken.None);
+                using FileStream reader = new(payload, FileMode.Open, FileAccess.Read, FileShare.Read);
+                _ = Assert.Throws<IOException>(() => new FileStream(payload, FileMode.Open, FileAccess.Write, FileShare.ReadWrite).Dispose());
+            }
+            finally
+            {
+                if (File.Exists(payload)) { File.Delete(payload); }
+                if (Directory.Exists(directory)) { Directory.Delete(directory, recursive: true); }
+            }
         }
 
         [TestMethod]
@@ -432,7 +484,11 @@ namespace Guard.WindowsPoc.Tests.Native
         private static AppLockerPolicySnapshot Snapshot(string xml)
         {
             return new(new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), xml, xml,
-                PolicyPresence.Absent, PolicyPresence.Absent, true, true);
+                PolicyPresence.Absent, PolicyPresence.Absent, true, true)
+            { RawLocalPolicySha256 = PolicyMutationDecision.Hash(xml) };
         }
+
+        private sealed record FakeAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
+            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization;
     }
 }

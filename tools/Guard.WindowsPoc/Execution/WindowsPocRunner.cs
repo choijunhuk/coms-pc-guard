@@ -65,6 +65,7 @@ namespace Guard.WindowsPoc.Execution
                     result = PocRunResult.Success;
                 }
             }
+            catch (PocPolicyDriftException) { drift = true; result = PocRunResult.HostCloneRecoveryRequired; }
             catch (Exception exception) when (Recoverable(exception)) { result = PocRunResult.ProbeFailed; }
             finally
             {
@@ -119,6 +120,7 @@ namespace Guard.WindowsPoc.Execution
                 await store.SaveAsync(journal.WithPhase(PocJournalPhase.Recovered), cleanup.Token).ConfigureAwait(false);
                 return PocRunResult.Success;
             }
+            catch (PocPolicyDriftException) { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
             catch (Exception exception) when (Recoverable(exception)) { return PocRunResult.HostCloneRecoveryRequired; }
         }
 

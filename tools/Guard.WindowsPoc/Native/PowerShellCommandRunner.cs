@@ -19,7 +19,7 @@ namespace Guard.WindowsPoc.Native
         {
             _trust = new WindowsScriptTrustVerifier();
             _execute = ExecuteAsync;
-            _executeMutation = (info, _, token) => ExecuteProcessAsync(info, token);
+            _executeMutation = (info, _, token) => ExecuteMutationProcessAsync(info, token);
             _timeout = TimeSpan.FromSeconds(30);
         }
         internal PowerShellCommandRunner(IScriptTrustVerifier trust, Func<ProcessStartInfo, CancellationToken, Task<string>> execute, TimeSpan? timeout = null)
@@ -68,6 +68,34 @@ namespace Guard.WindowsPoc.Native
                 {
                     await CleanupProcessAsync(process).ConfigureAwait(false);
                 }
+                finally
+                {
+                    process.StandardOutput.Dispose();
+                    process.StandardError.Dispose();
+                    if (info.RedirectStandardInput) { process.StandardInput.Dispose(); }
+                }
+            }
+        }
+
+        internal static async Task<string> ExecuteMutationProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken)
+        {
+            using Process process = new() { StartInfo = info };
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!process.Start()) { throw new InvalidOperationException("Policy mutation refused."); }
+            try
+            {
+                Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken);
+                Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken);
+                if (info.RedirectStandardInput) { process.StandardInput.Close(); }
+                _ = await Task.WhenAll(stdout, stderr).WaitAsync(cancellationToken).ConfigureAwait(false);
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                return stderr.Result.Length != 0 || process.ExitCode is not (0 or 3)
+                    ? throw new InvalidOperationException("Policy mutation refused.")
+                    : stdout.Result;
+            }
+            finally
+            {
+                try { await CleanupProcessAsync(process).ConfigureAwait(false); }
                 finally
                 {
                     process.StandardOutput.Dispose();
@@ -223,6 +251,7 @@ namespace Guard.WindowsPoc.Native
                     if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
                     string json = await _executeMutation(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
                     ValidateMutationResult(json, authorization.Restore);
+                    if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
                     return new(null);
                 }
                 finally
@@ -248,15 +277,34 @@ namespace Guard.WindowsPoc.Native
                 _ = PolicyMutationDecision.Hash(xml) == expectedSha256 ? true : throw new InvalidOperationException("Policy mutation refused.");
                 return null;
             }
-            _ = Directory.CreateDirectory(Root);
-            FileStream stream = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.WriteThrough);
-            byte[] bytes = Encoding.UTF8.GetBytes(xml);
-            if (bytes.Length > 1_000_000) { throw new InvalidOperationException("Policy mutation refused."); }
-            await stream.WriteAsync(bytes, token).ConfigureAwait(false);
-            await stream.FlushAsync(token).ConfigureAwait(false);
-            stream.Flush(flushToDisk: true);
-            RehashPayload(stream, expectedSha256);
-            return stream;
+            return await CreateRetainedPayloadLeaseAsync(path, xml, expectedSha256, token).ConfigureAwait(false);
+        }
+
+        internal static async Task<FileStream> CreateRetainedPayloadLeaseAsync(string path, string xml, string expectedSha256, CancellationToken token)
+        {
+            _ = Directory.CreateDirectory(Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Policy mutation refused."));
+            FileStream? retained = null;
+            try
+            {
+                byte[] bytes = Encoding.UTF8.GetBytes(xml);
+                if (bytes.Length > 1_000_000) { throw new InvalidOperationException("Policy mutation refused."); }
+                await using (FileStream writer = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                {
+                    await writer.WriteAsync(bytes, token).ConfigureAwait(false);
+                    await writer.FlushAsync(token).ConfigureAwait(false);
+                    writer.Flush(flushToDisk: true);
+                }
+                retained = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+                RehashPayload(retained, expectedSha256);
+                return retained;
+            }
+            catch
+            {
+                if (retained is not null) { await retained.DisposeAsync().ConfigureAwait(false); }
+                try { File.Delete(path); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { /* preserve original refusal */ }
+                throw;
+            }
         }
 
         private static void DeletePayloadIfNative(string path)
@@ -287,6 +335,7 @@ namespace Guard.WindowsPoc.Native
                 using JsonDocument document = JsonDocument.Parse(json);
                 RejectDuplicates(document.RootElement);
                 string status = RequiredText(document.RootElement, "Status");
+                if (status.Equals("DRIFT", StringComparison.OrdinalIgnoreCase)) { throw new PocPolicyDriftException(); }
                 if (status != (restore ? "Restored" : "Applied")) { throw new InvalidOperationException("Policy mutation refused."); }
             }
             catch (JsonException) { throw new InvalidOperationException("Policy mutation refused."); }

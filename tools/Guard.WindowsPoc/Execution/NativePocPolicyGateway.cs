@@ -7,10 +7,10 @@ namespace Guard.WindowsPoc.Execution
     internal sealed class NativePocPolicyGateway : IPocPolicyGateway
     {
         private readonly IWindowsCommandRunner _runner;
-        private readonly Func<PocTransactionJournal, bool, CancellationToken, Task<PocMutationAuthorization>>? _authorize;
+        private readonly Func<PocTransactionJournal, bool, CancellationToken, Task<IPocMutationAuthorization>>? _authorize;
 
         internal NativePocPolicyGateway(IWindowsCommandRunner runner,
-            Func<PocTransactionJournal, bool, CancellationToken, Task<PocMutationAuthorization>>? authorize = null)
+            Func<PocTransactionJournal, bool, CancellationToken, Task<IPocMutationAuthorization>>? authorize = null)
         {
             _runner = runner;
             _authorize = authorize;
@@ -26,7 +26,7 @@ namespace Guard.WindowsPoc.Execution
         {
             ArgumentNullException.ThrowIfNull(journal);
             if (_authorize is null) { throw new InvalidOperationException("Protected mutation authorization is required."); }
-            PocMutationAuthorization authorization = await _authorize(journal, restore, token).ConfigureAwait(false);
+            IPocMutationAuthorization authorization = await _authorize(journal, restore, token).ConfigureAwait(false);
             WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
             _ = await _runner.RunAsync(request, token).ConfigureAwait(false);
         }
@@ -44,7 +44,8 @@ namespace Guard.WindowsPoc.Execution
             PolicyPresence csp = snapshot.Inventory.CspMdm;
             PolicyPresence wdac = snapshot.Inventory.Wdac;
             return new(snapshot.CapturedAtUtc, snapshot.LocalPolicyXml, snapshot.EffectivePolicyXml!,
-                csp, wdac, snapshot.AppIdServiceRunning, snapshot.AppIdServiceAutomatic);
+                csp, wdac, snapshot.AppIdServiceRunning, snapshot.AppIdServiceAutomatic)
+            { RawLocalPolicySha256 = snapshot.RawLocalPolicySha256 };
         }
     }
 }

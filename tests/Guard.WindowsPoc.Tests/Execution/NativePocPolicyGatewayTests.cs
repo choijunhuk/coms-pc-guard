@@ -2,7 +2,9 @@ using Guard.WindowsPoc.Execution;
 using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Safety;
 using Guard.WindowsPoc.Tests.Native;
+using System.Text.Json.Nodes;
 
 namespace Guard.WindowsPoc.Tests.Execution
 {
@@ -40,7 +42,10 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             RecordingRunner runner = new();
             NativePocPolicyGateway gateway = new(runner, (journal, restore, _) =>
-                Task.FromResult(PocMutationAuthorization.AuthorizeForTest(journal, restore, restore ? First : Empty, "proof")));
+                Task.FromResult<IPocMutationAuthorization>(new FakeAuthorization(journal, restore,
+                    restore ? First.RawLocalPolicySha256! : Empty.RawLocalPolicySha256!,
+                    restore ? journal.InitialBaseline.LocalHash : journal.After.LocalHash,
+                    restore ? journal.InitialBaseline.LocalPolicyXml : journal.After.LocalPolicyXml)));
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
             await gateway.WriteAsync(journal, restore: false, CancellationToken.None);
@@ -57,8 +62,22 @@ namespace Guard.WindowsPoc.Tests.Execution
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
             AppLockerPolicySnapshot drift = Snapshot("<AppLockerPolicy Version=\"1\"><external /></AppLockerPolicy>");
-            Assert.IsFalse(PocMutationAuthorization.TryAuthorize(journal, restore: false, drift, "proof", out _));
-            Assert.IsFalse(PocMutationAuthorization.TryAuthorize(journal, restore: true, drift, "proof", out _));
+            Assert.IsFalse(drift.SamePolicy(journal.Before));
+            Assert.IsFalse(journal.Recognizes(drift));
+        }
+
+        [TestMethod]
+        public async Task CapturePreservesTransportedRawPolicyHashAcrossEquivalentFormatting()
+        {
+            const string formattedEmpty = "<AppLockerPolicy Version=\"1\"></AppLockerPolicy>";
+            const string rawHash = "00C785D262C6873D62CC0FDFCC5F120D91EC687939708E3BDCB0AB136F0918C4";
+            JsonObject input = JsonNode.Parse(PowerShellCommandRunnerTests.Complete)!.AsObject();
+            input["LocalPolicyXml"] = formattedEmpty;
+            input["RawLocalPolicySha256"] = rawHash;
+            RecordingRunner runner = new(input.ToJsonString());
+            AppLockerPolicySnapshot snapshot = await new NativePocPolicyGateway(runner).CaptureAsync(CancellationToken.None);
+            Assert.AreEqual(rawHash, snapshot.RawLocalPolicySha256);
+            Assert.AreNotEqual(snapshot.LocalHash, snapshot.RawLocalPolicySha256);
         }
 
         [TestMethod]
@@ -70,19 +89,24 @@ namespace Guard.WindowsPoc.Tests.Execution
             Assert.HasCount(0, runner.Requests);
         }
 
-        private sealed class RecordingRunner : IWindowsCommandRunner
+        private sealed class RecordingRunner(string captureJson) : IWindowsCommandRunner
         {
             public List<WindowsCommandRequest> Requests { get; } = [];
+            public RecordingRunner() : this(PowerShellCommandRunnerTests.Complete) { }
             public Task<WindowsCommandResult> RunAsync(WindowsCommandRequest request, CancellationToken cancellationToken)
             {
                 Requests.Add(request);
-                return Task.FromResult(new WindowsCommandResult(PowerShellCommandRunner.ParseSnapshot(PowerShellCommandRunnerTests.Complete)));
+                return Task.FromResult(new WindowsCommandResult(PowerShellCommandRunner.ParseSnapshot(captureJson)));
             }
         }
 
         private static AppLockerPolicySnapshot Snapshot(string xml)
         {
-            return new(Now, xml, xml, PolicyPresence.Absent, PolicyPresence.Absent, true, true);
+            return new(Now, xml, xml, PolicyPresence.Absent, PolicyPresence.Absent, true, true)
+            { RawLocalPolicySha256 = PolicyMutationDecision.Hash(xml) };
         }
+
+        private sealed record FakeAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
+            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization;
     }
 }

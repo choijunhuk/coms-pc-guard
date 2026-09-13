@@ -123,6 +123,18 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public async Task NativeScriptDriftResultLatchesHostRecoveryAndNeverRetriesLiveCleanup()
+        {
+            ScriptedGateway gateway = new() { DriftDuringRestore = true, Current = First };
+            MemoryJournal store = new() { Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.Mutated) };
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            gateway.Current = Empty;
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(1, gateway.RestoreWrites);
+            Assert.AreEqual(PocJournalPhase.HostCloneRecoveryRequired, store.Value.Phase);
+        }
+
+        [TestMethod]
         public async Task ExistingUnrecoverableJournalDominatesRefusalToStartAnotherRun()
         {
             ScriptedGateway gateway = new() { Current = First, FailRestore = true };
@@ -294,6 +306,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             public int FailWrite { get; init; }
             public bool FailAfterMutation { get; init; }
             public bool FailRestore { get; init; }
+            public bool DriftDuringRestore { get; init; }
             public int DriftAtCapture { get; init; }
             public string? ProbeFailure { get; init; }
             private int _captures;
@@ -315,6 +328,7 @@ namespace Guard.WindowsPoc.Tests.Execution
                 {
                     if (FailRestore) { throw new IOException("restore"); }
                     RestoreWrites++;
+                    if (DriftDuringRestore) { throw new PocPolicyDriftException(); }
                 }
                 else if (++_applies == FailWrite && !FailAfterMutation) { throw new IOException("before"); }
                 Current = restore ? journal.InitialBaseline : journal.After;

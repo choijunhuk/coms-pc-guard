@@ -112,6 +112,13 @@ namespace Guard.WindowsPoc.Native
             await issued.RevalidateDispatchStateAsync(token).ConfigureAwait(false);
         }
 
+        internal static async Task ClaimIssuedAuthorizationAsync(IPocMutationAuthorization authorization, WindowsCommand command, CancellationToken token)
+        {
+            if (authorization is not PocMutationAuthorization issued)
+            { throw new InvalidOperationException("Protected mutation authorization refused."); }
+            await issued.ClaimDispatchAsync(command, token).ConfigureAwait(false);
+        }
+
         private async Task SetNativeWriteBarrierAsync(PocTransactionJournal journal, PocRecoveryBarrier barrier, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
@@ -133,9 +140,21 @@ namespace Guard.WindowsPoc.Native
         private sealed record PocMutationAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
             string ExpectedPayloadSha256, string PayloadXml, DurablePocJournalStore? JournalStore, Action RevalidateAction) : IPocMutationAuthorization
         {
+            private int _dispatchClaimed;
+
             public void Revalidate()
             {
                 RevalidateAction();
+            }
+
+            internal async Task ClaimDispatchAsync(WindowsCommand command, CancellationToken token)
+            {
+                if (Interlocked.Exchange(ref _dispatchClaimed, 1) != 0)
+                { throw new InvalidOperationException("Protected mutation authorization refused."); }
+                if (command == WindowsCommand.Restore != Restore || command is not (WindowsCommand.Apply or WindowsCommand.Restore)
+                    || !string.Equals(PolicyMutationDecision.Hash(PayloadXml), ExpectedPayloadSha256, StringComparison.OrdinalIgnoreCase))
+                { throw new InvalidOperationException("Protected mutation authorization refused."); }
+                await RevalidateDispatchStateAsync(token).ConfigureAwait(false);
             }
 
             internal async Task RevalidateDispatchStateAsync(CancellationToken token)

@@ -401,6 +401,63 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task IssuedAuthorizationCannotReplayAfterFirstDriftAttemptWhileBarrierRemainsInFlight()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            await WithJournalStoreAsync(journal, PocRecoveryBarrier.NativeWriteInFlight, async store =>
+            {
+                IPocMutationAuthorization authorization = IssuedAuthorizationWithoutDispatchBarrier(journal, restore: false, store);
+                int dispatches = 0;
+                PowerShellCommandRunner runner = new(new Trust(), (_, _) =>
+                {
+                    _ = Interlocked.Increment(ref dispatches);
+                    return Task.FromResult(/*lang=json,strict*/ "{\"Status\":\"DRIFT\"}");
+                });
+                _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() =>
+                    runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+                Assert.AreEqual(1, dispatches);
+            });
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public async Task IssuedAuthorizationConcurrentReplayAllowsOnlyOneDispatch(bool restore)
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            await WithJournalStoreAsync(journal, PocRecoveryBarrier.NativeWriteInFlight, async store =>
+            {
+                IPocMutationAuthorization authorization = IssuedAuthorizationWithoutDispatchBarrier(journal, restore, store);
+                int dispatches = 0;
+                using SemaphoreSlim releaseDispatch = new(0, 1);
+                PowerShellCommandRunner runner = new(new Trust(), async (info, token) =>
+                {
+                    _ = Interlocked.Increment(ref dispatches);
+                    await releaseDispatch.WaitAsync(token);
+                    return restore ? /*lang=json,strict*/ "{\"Status\":\"Restored\"}" : /*lang=json,strict*/ "{\"Status\":\"Applied\"}";
+                });
+                WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
+                Task<WindowsCommandResult> first = runner.RunAsync(request, CancellationToken.None);
+                Task<WindowsCommandResult> second = runner.RunAsync(request, CancellationToken.None);
+                _ = await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(2)));
+                _ = releaseDispatch.Release();
+                Task all = Task.WhenAll(first, second);
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(() => all);
+                Assert.AreEqual(1, dispatches);
+            });
+        }
+
+        [TestMethod]
         public async Task PayloadLeaseMismatchDisposesAndDeletesStagedFile()
         {
             string directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

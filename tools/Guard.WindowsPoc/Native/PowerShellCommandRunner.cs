@@ -235,7 +235,7 @@ namespace Guard.WindowsPoc.Native
                 {
                     throw new InvalidOperationException("Protected mutation authorization does not match command.");
                 }
-                await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, cancellationToken).ConfigureAwait(false);
+                await PocProtectedMutationAuthority.ClaimIssuedAuthorizationAsync(authorization, request.Command, cancellationToken).ConfigureAwait(false);
 
                 using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(_timeout);

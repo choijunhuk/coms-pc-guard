@@ -1,3 +1,4 @@
+using System.Reflection;
 using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Tests.Safety
@@ -32,7 +33,7 @@ namespace Guard.WindowsPoc.Tests.Safety
             Assert.IsTrue(result.AllowsPolicyGate);
             Assert.IsTrue(result.UsesSystemProof);
             Assert.AreEqual(Owner, result.OwnerSid);
-            OwnerTokenPolicyGateCapability capability = OwnerTokenAttestation.AuthorizePolicyGate(Owner, Nonce, VmName, VmIdentityHash,
+            OwnerTokenPolicyGateCapability capability = CapabilityForTest(Owner, Nonce, VmName, VmIdentityHash,
                 () => new(SystemSid, false, true, proof));
             Assert.AreEqual(Owner, capability.Revalidate());
         }
@@ -43,7 +44,7 @@ namespace Guard.WindowsPoc.Tests.Safety
             OwnerTokenAttestationResult missing = OwnerTokenAttestation.Evaluate(Owner, Nonce, VmName, VmIdentityHash,
                 new(SystemSid, false, true, null));
             Assert.IsFalse(missing.AllowsPolicyGate);
-            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.AuthorizePolicyGate(Owner, Nonce, VmName, VmIdentityHash,
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => CapabilityForTest(Owner, Nonce, VmName, VmIdentityHash,
                 () => new(SystemSid, false, true, null)));
 
             OwnerTokenAttestationProof[] invalid =
@@ -98,7 +99,7 @@ namespace Guard.WindowsPoc.Tests.Safety
         public void CapabilityRevalidatesCurrentProcessIdentityBeforeUse()
         {
             OwnerTokenAttestationContext context = new(SystemSid, false, true, ValidProof());
-            OwnerTokenPolicyGateCapability capability = OwnerTokenAttestation.AuthorizePolicyGate(Owner, Nonce, VmName, VmIdentityHash, () => context);
+            OwnerTokenPolicyGateCapability capability = CapabilityForTest(Owner, Nonce, VmName, VmIdentityHash, () => context);
             Assert.AreEqual(Owner, capability.Revalidate());
 
             context = context with { ProcessSid = Member };
@@ -130,6 +131,43 @@ namespace Guard.WindowsPoc.Tests.Safety
                     OwnerTokenPathEvidence.ProofFile(Owner, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false)
                 ]);
             Assert.IsTrue(OwnerTokenAttestation.Evaluate(Owner, Nonce, VmName, VmIdentityHash, new(SystemSid, false, true, proof)).AllowsPolicyGate);
+        }
+
+        [TestMethod]
+        public void GlobalProgramDataAdministratorsFullControlIsTrustedOnlyForGlobalParent()
+        {
+            const int fullControl = 0x1f01ff;
+            OwnerTokenPathEvidence global = OwnerTokenAttestation.ClassifyPathEvidence(OwnerTokenPathEvidence.GlobalParentRole,
+                "S-1-5-32-544", protectedAcl: false, reparsePoint: false,
+                [new("S-1-5-32-544", fullControl, Allow: true, InheritOnly: false, Callback: false)], Owner);
+            Assert.IsFalse(global.UntrustedReplacement);
+
+            OwnerTokenPathEvidence app = OwnerTokenAttestation.ClassifyPathEvidence(OwnerTokenPathEvidence.ApplicationDirectoryRole,
+                Owner, protectedAcl: true, reparsePoint: false,
+                [new("S-1-5-32-544", fullControl, Allow: true, InheritOnly: false, Callback: false)], Owner);
+            Assert.IsTrue(app.UntrustedReplacement);
+        }
+
+        [TestMethod]
+        public void TestCapabilityCannotHideCopiedVmProof()
+        {
+            OwnerTokenPolicyGateCapability capability = CapabilityForTest(Owner, Nonce, VmName, VmIdentityHash,
+                () => new(SystemSid, false, true, ValidProof()));
+            Assert.AreEqual(Owner, capability.Revalidate());
+
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => CapabilityForTest(Owner, Nonce, VmName, new string('b', 64),
+                () => new(SystemSid, false, true, ValidProof())));
+        }
+
+        private static OwnerTokenPolicyGateCapability CapabilityForTest(string ownerSid, string nonce, string vmName,
+            string vmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
+        {
+            ConstructorInfo constructor = typeof(OwnerTokenPolicyGateCapability).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null, [typeof(string), typeof(string), typeof(string), typeof(string), typeof(Func<OwnerTokenAttestationContext>)], modifiers: null)
+                ?? throw new InvalidOperationException("Expected private capability constructor.");
+            OwnerTokenPolicyGateCapability capability = (OwnerTokenPolicyGateCapability)constructor.Invoke([ownerSid, nonce, vmName, vmIdentityHash, readContext]);
+            _ = capability.Revalidate();
+            return capability;
         }
 
         private static OwnerTokenAttestationProof ValidProof()

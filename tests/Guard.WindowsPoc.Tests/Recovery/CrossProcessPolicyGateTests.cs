@@ -1,5 +1,6 @@
 using Guard.WindowsPoc.Recovery;
 using Guard.WindowsPoc.Safety;
+using System.Reflection;
 
 namespace Guard.WindowsPoc.Tests.Recovery
 {
@@ -52,12 +53,23 @@ namespace Guard.WindowsPoc.Tests.Recovery
         public void PolicyGateConstructionRequiresNativeOwnerAttestationCapability()
         {
             OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab", new string('a', 64));
-            OwnerTokenPolicyGateCapability accepted = OwnerTokenAttestation.AuthorizePolicyGate(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
-                new OwnerTokenAttestationContext("S-1-5-18", false, true, proof));
+            OwnerTokenPolicyGateCapability accepted = CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
+                () => new OwnerTokenAttestationContext("S-1-5-18", false, true, proof));
             _ = new CrossProcessPolicyGate(accepted);
 
-            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.AuthorizePolicyGate(Owner, proof.Nonce, proof.ExpectedVmName,
-                proof.VmIdentityHash, new OwnerTokenAttestationContext("S-1-5-18", false, true, proof with { AclVerified = false })));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName,
+                proof.VmIdentityHash, () => new OwnerTokenAttestationContext("S-1-5-18", false, true, proof with { AclVerified = false })));
+        }
+
+        private static OwnerTokenPolicyGateCapability CapabilityForTest(string ownerSid, string nonce, string vmName,
+            string vmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
+        {
+            ConstructorInfo constructor = typeof(OwnerTokenPolicyGateCapability).GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null, [typeof(string), typeof(string), typeof(string), typeof(string), typeof(Func<OwnerTokenAttestationContext>)], modifiers: null)
+                ?? throw new InvalidOperationException("Expected private capability constructor.");
+            OwnerTokenPolicyGateCapability capability = (OwnerTokenPolicyGateCapability)constructor.Invoke([ownerSid, nonce, vmName, vmIdentityHash, readContext]);
+            _ = capability.Revalidate();
+            return capability;
         }
 
         [TestMethod]

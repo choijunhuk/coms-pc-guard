@@ -1,13 +1,18 @@
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using Guard.WindowsPoc.Configuration;
 using Guard.WindowsPoc.Recovery;
+using Microsoft.Win32;
 
 namespace Guard.WindowsPoc.Safety
 {
     internal sealed record OwnerTokenProofPayload(string OwnerSid, string OwnerTokenSid, string Nonce, string ExpectedVmName, string VmIdentityHash);
+    internal sealed record OwnerTokenAceEvidence(string Sid, int AccessMask, bool Allow, bool InheritOnly, bool Callback);
+    internal sealed record OwnerTokenNativeVmBinding(string Nonce, string ExpectedVmName, string VmIdentityHash);
 
     internal sealed record OwnerTokenPathEvidence(
         string Role,
@@ -86,25 +91,27 @@ namespace Guard.WindowsPoc.Safety
         private readonly string _expectedNonce;
         private readonly string _expectedVmName;
         private readonly string _expectedVmIdentityHash;
-        private readonly Func<OwnerTokenAttestationContext> _readContext;
+        private readonly Func<OwnerTokenAttestationContext> _readNativeContext;
 
         private OwnerTokenPolicyGateCapability(string ownerSid, string expectedNonce, string expectedVmName,
-            string expectedVmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
+            string expectedVmIdentityHash, Func<OwnerTokenAttestationContext> readNativeContext)
         {
             CrossProcessPolicyGate.ValidateOwner(ownerSid);
             OwnerSid = ownerSid;
             _expectedNonce = expectedNonce;
             _expectedVmName = expectedVmName;
             _expectedVmIdentityHash = expectedVmIdentityHash;
-            _readContext = readContext;
+            _readNativeContext = readNativeContext;
         }
 
         internal string OwnerSid { get; }
 
-        internal static OwnerTokenPolicyGateCapability Create(string ownerSid, string expectedNonce, string expectedVmName,
-            string expectedVmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
+        [SupportedOSPlatform("windows")]
+        internal static OwnerTokenPolicyGateCapability CreateNative(string ownerSid, string expectedNonce, string expectedVmName, bool elevated)
         {
-            OwnerTokenPolicyGateCapability capability = new(ownerSid, expectedNonce, expectedVmName, expectedVmIdentityHash, readContext);
+            OwnerTokenNativeVmBinding binding = OwnerTokenAttestation.ReadNativeVmBinding(expectedNonce, expectedVmName);
+            OwnerTokenPolicyGateCapability capability = new(ownerSid, expectedNonce, expectedVmName, binding.VmIdentityHash,
+                () => OwnerTokenAttestation.ReadNativeContext(ownerSid, expectedNonce, expectedVmName, elevated));
             _ = capability.Revalidate();
             return capability;
         }
@@ -112,7 +119,7 @@ namespace Guard.WindowsPoc.Safety
         internal string Revalidate()
         {
             OwnerTokenAttestationResult result = OwnerTokenAttestation.Evaluate(OwnerSid, _expectedNonce, _expectedVmName,
-                _expectedVmIdentityHash, _readContext());
+                _expectedVmIdentityHash, _readNativeContext());
             return result.AllowsPolicyGate ? OwnerSid : throw new InvalidOperationException("Designated Owner or protected SYSTEM Owner-token attestation required.");
         }
     }
@@ -121,16 +128,18 @@ namespace Guard.WindowsPoc.Safety
     {
         internal const string ApplicationRoot = @"C:\ProgramData\ComsPcGuardPoc";
         internal const string ProofPath = ApplicationRoot + @"\owner-attestation.json";
+        internal const string VmMarkerPath = ApplicationRoot + @"\vm-attestation.json";
         private static readonly string[] GlobalParents = [@"C:\ProgramData"];
         private const int CurrentVersion = 1;
         private const string LocalSystemSid = "S-1-5-18";
+        private const string AdministratorsSid = "S-1-5-32-544";
 
         internal static OwnerTokenAttestationProof CreateProof(string ownerSid, string nonce, string expectedVmName, string vmIdentityHash)
         {
             ValidateInputs(ownerSid, nonce, expectedVmName, vmIdentityHash);
             return BindProof(new(ownerSid, ownerSid, nonce, expectedVmName, vmIdentityHash),
             [
-                OwnerTokenPathEvidence.GlobalParent("S-1-5-32-544", aclKnown: true, reparsePoint: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.GlobalParent(AdministratorsSid, aclKnown: true, reparsePoint: false, untrustedReplacement: false),
                 OwnerTokenPathEvidence.ApplicationDirectory(ownerSid, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false),
                 OwnerTokenPathEvidence.ProofFile(ownerSid, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false)
             ]);
@@ -146,7 +155,7 @@ namespace Guard.WindowsPoc.Safety
             bool aclVerified = proof is not null && app is not null && parents.Length > 0
                 && TrustedProtectedBoundaryOwner(proof.Owner, payload.OwnerSid)
                 && TrustedProtectedBoundaryOwner(app.Owner, payload.OwnerSid)
-                && parents.All(parent => TrustedAncestorOwner(parent.Owner))
+                && parents.All(parent => TrustedGlobalParentOwner(parent.Owner))
                 && proof.AclKnown && proof.ProtectedAcl
                 && app.AclKnown && app.ProtectedAcl
                 && parents.All(parent => parent.AclKnown);
@@ -156,6 +165,25 @@ namespace Guard.WindowsPoc.Safety
                 || parents.Any(parent => parent.UntrustedReplacement);
             return new(payload.OwnerSid, payload.OwnerTokenSid, payload.Nonce, payload.ExpectedVmName, payload.VmIdentityHash,
                 proof?.Owner, aclVerified, reparse, untrustedWrite, untrustedReplacement);
+        }
+
+        internal static OwnerTokenPathEvidence ClassifyPathEvidence(string role, string? owner, bool protectedAcl, bool reparsePoint,
+            IReadOnlyList<OwnerTokenAceEvidence> aces, string ownerSid)
+        {
+            ArgumentNullException.ThrowIfNull(aces);
+            bool known = true;
+            bool untrustedWrite = false;
+            bool untrustedReplacement = false;
+            foreach (OwnerTokenAceEvidence ace in aces)
+            {
+                if (ace.Callback) { known = false; continue; }
+                if (!ace.Allow || ace.InheritOnly) { continue; }
+                if (TrustedAce(role, ace.Sid, ownerSid)) { continue; }
+                untrustedWrite |= AllowsUntrustedMutation(ace.AccessMask);
+                untrustedReplacement |= AllowsUntrustedReplacement(ace.AccessMask);
+            }
+
+            return new(role, owner, known, protectedAcl, reparsePoint, untrustedWrite, untrustedReplacement);
         }
 
         internal static OwnerTokenAttestationResult Evaluate(string ownerSid, string expectedNonce, string expectedVmName,
@@ -182,29 +210,17 @@ namespace Guard.WindowsPoc.Safety
             return protectedProof ? OwnerTokenAttestationResult.AllowSystemProof(ownerSid) : OwnerTokenAttestationResult.Refuse(ownerSid);
         }
 
-        internal static OwnerTokenPolicyGateCapability AuthorizePolicyGate(string ownerSid, string expectedNonce, string expectedVmName,
-            string expectedVmIdentityHash, OwnerTokenAttestationContext context)
-        {
-            return AuthorizePolicyGate(ownerSid, expectedNonce, expectedVmName, expectedVmIdentityHash, () => context);
-        }
-
-        internal static OwnerTokenPolicyGateCapability AuthorizePolicyGate(string ownerSid, string expectedNonce, string expectedVmName,
-            string expectedVmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
-        {
-            ArgumentNullException.ThrowIfNull(readContext);
-            return OwnerTokenPolicyGateCapability.Create(ownerSid, expectedNonce, expectedVmName, expectedVmIdentityHash, readContext);
-        }
-
         [SupportedOSPlatform("windows")]
-        internal static OwnerTokenAttestationProof ProvisionForNativeOwner(string ownerSid, string nonce, string expectedVmName, string vmIdentityHash)
+        internal static OwnerTokenAttestationProof ProvisionForNativeOwner(string ownerSid, string nonce, string expectedVmName)
         {
             ValidateNativeOwnerProcess(ownerSid);
-            OwnerTokenAttestationProof proof = CreateProof(ownerSid, nonce, expectedVmName, vmIdentityHash);
+            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(nonce, expectedVmName);
+            OwnerTokenAttestationProof proof = CreateProof(ownerSid, nonce, expectedVmName, binding.VmIdentityHash);
             EnsureApplicationDirectory(ownerSid);
             if (File.Exists(ProofPath))
             {
                 OwnerTokenAttestationProof existing = ReadNativeProof(ownerSid);
-                OwnerTokenAttestationResult result = Evaluate(ownerSid, nonce, expectedVmName, vmIdentityHash, new(LocalSystemSid, false, true, existing));
+                OwnerTokenAttestationResult result = Evaluate(ownerSid, nonce, expectedVmName, binding.VmIdentityHash, new(LocalSystemSid, false, true, existing));
                 return result.AllowsPolicyGate ? existing : throw Refused();
             }
 
@@ -220,11 +236,39 @@ namespace Guard.WindowsPoc.Safety
         }
 
         [SupportedOSPlatform("windows")]
-        internal static OwnerTokenPolicyGateCapability AuthorizeNativePolicyGate(string ownerSid, string expectedNonce,
-            string expectedVmName, string expectedVmIdentityHash, bool elevated)
+        internal static OwnerTokenPolicyGateCapability AuthorizeNativePolicyGate(string ownerSid, string expectedNonce, string expectedVmName, bool elevated)
         {
-            return AuthorizePolicyGate(ownerSid, expectedNonce, expectedVmName, expectedVmIdentityHash, () =>
-                new(ReadProcessSid(), IsImpersonating(), elevated, File.Exists(ProofPath) ? ReadNativeProof(ownerSid) : null));
+            return OwnerTokenPolicyGateCapability.CreateNative(ownerSid, expectedNonce, expectedVmName, elevated);
+        }
+
+        [SupportedOSPlatform("windows")]
+        internal static OwnerTokenAttestationContext ReadNativeContext(string ownerSid, string expectedNonce, string expectedVmName, bool elevated)
+        {
+            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(expectedNonce, expectedVmName);
+            OwnerTokenAttestationProof? proof = File.Exists(ProofPath) ? ReadNativeProof(ownerSid) : null;
+            _ = proof is null || proof.VmIdentityHash == binding.VmIdentityHash ? true : throw Refused();
+            return new(ReadProcessSid(), IsImpersonating(), elevated, proof);
+        }
+
+        [SupportedOSPlatform("windows")]
+        internal static OwnerTokenNativeVmBinding ReadNativeVmBinding(string expectedNonce, string expectedVmName)
+        {
+            string currentHash = CaptureCurrentVmIdentityHash();
+            NativeVmMarker marker = ReadNativeVmMarker();
+            return marker.Nonce == expectedNonce && marker.ExpectedVmName == expectedVmName && marker.VmIdentityHash == currentHash
+                ? new(marker.Nonce, marker.ExpectedVmName, marker.VmIdentityHash) : throw Refused();
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static NativeVmMarker ReadNativeVmMarker()
+        {
+            using FileStream file = new(VmMarkerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            VmMarkerEnvelope envelope = JsonSerializer.Deserialize<VmMarkerEnvelope>(file) ?? throw Refused();
+            _ = envelope.Version == CurrentVersion ? true : throw Refused();
+            OwnerTokenPathEvidence marker = ReadProtection(file, OwnerTokenPathEvidence.ProofFileRole, LocalSystemSid);
+            _ = marker.AclKnown && marker.ProtectedAcl && !marker.ReparsePoint && !marker.UntrustedWrite && !marker.UntrustedReplacement ? true : throw Refused();
+
+            return new(envelope.Nonce, envelope.ExpectedVmName, envelope.VmIdentityHash);
         }
 
         [SupportedOSPlatform("windows")]
@@ -236,9 +280,9 @@ namespace Guard.WindowsPoc.Safety
             OwnerTokenProofPayload payload = new(envelope.OwnerSid, envelope.OwnerTokenSid, envelope.Nonce, envelope.ExpectedVmName, envelope.VmIdentityHash);
             OwnerTokenPathEvidence[] paths =
             [
-                .. GlobalParents.Select(path => ReadProtection(new DirectoryInfo(path), ownerSid, OwnerTokenPathEvidence.GlobalParentRole)),
-                ReadProtection(new DirectoryInfo(ApplicationRoot), ownerSid, OwnerTokenPathEvidence.ApplicationDirectoryRole),
-                ReadProtection(file, ownerSid)
+                .. GlobalParents.Select(path => ReadProtection(new DirectoryInfo(path), OwnerTokenPathEvidence.GlobalParentRole, ownerSid)),
+                ReadProtection(new DirectoryInfo(ApplicationRoot), OwnerTokenPathEvidence.ApplicationDirectoryRole, ownerSid),
+                ReadProtection(file, OwnerTokenPathEvidence.ProofFileRole, ownerSid)
             ];
             return BindProof(payload, paths);
         }
@@ -251,9 +295,9 @@ namespace Guard.WindowsPoc.Safety
                 new DirectoryInfo(ApplicationRoot).Create(ProtectedDirectorySecurity(ownerSid));
             }
 
-            OwnerTokenPathEvidence app = ReadProtection(new DirectoryInfo(ApplicationRoot), ownerSid, OwnerTokenPathEvidence.ApplicationDirectoryRole);
+            OwnerTokenPathEvidence app = ReadProtection(new DirectoryInfo(ApplicationRoot), OwnerTokenPathEvidence.ApplicationDirectoryRole, ownerSid);
             if (!BindProof(new(ownerSid, ownerSid, new string('0', 32), WindowsPocOptions.AuthorizedVmName, new string('0', 64)),
-                [OwnerTokenPathEvidence.GlobalParent("S-1-5-32-544", true, false, false), app, OwnerTokenPathEvidence.ProofFile(ownerSid, true, true, false, false, false)]).AclVerified
+                [OwnerTokenPathEvidence.GlobalParent(AdministratorsSid, true, false, false), app, OwnerTokenPathEvidence.ProofFile(ownerSid, true, true, false, false, false)]).AclVerified
                 || app.UntrustedWrite || app.UntrustedReplacement || app.ReparsePoint)
             {
                 throw Refused();
@@ -292,51 +336,73 @@ namespace Guard.WindowsPoc.Safety
         }
 
         [SupportedOSPlatform("windows")]
-        private static OwnerTokenPathEvidence ReadProtection(FileSystemInfo entry, string ownerSid, string role)
+        private static OwnerTokenPathEvidence ReadProtection(FileSystemInfo entry, string role, string ownerSid)
         {
             FileSystemSecurity security = entry is DirectoryInfo directory ? directory.GetAccessControl() : ((FileInfo)entry).GetAccessControl();
             return BuildEvidence(role, security, entry.Attributes, ownerSid);
         }
 
         [SupportedOSPlatform("windows")]
-        private static OwnerTokenPathEvidence ReadProtection(FileStream file, string ownerSid)
+        private static OwnerTokenPathEvidence ReadProtection(FileStream file, string role, string ownerSid)
         {
             FileSecurity security = file.GetAccessControl();
             FileAttributes attributes = File.GetAttributes(file.SafeFileHandle);
-            return BuildEvidence(OwnerTokenPathEvidence.ProofFileRole, security, attributes, ownerSid);
+            return BuildEvidence(role, security, attributes, ownerSid);
         }
 
         [SupportedOSPlatform("windows")]
         private static OwnerTokenPathEvidence BuildEvidence(string role, FileSystemSecurity security, FileAttributes attributes, string ownerSid)
         {
             RawSecurityDescriptor descriptor = new(security.GetSecurityDescriptorBinaryForm(), 0);
+            List<OwnerTokenAceEvidence> aces = [];
             bool known = descriptor.DiscretionaryAcl is not null;
-            bool untrustedWrite = false;
-            bool untrustedReplacement = false;
             if (descriptor.DiscretionaryAcl is not null)
             {
                 foreach (GenericAce ace in descriptor.DiscretionaryAcl)
                 {
-                    if (ace is not CommonAce common || common.IsCallback)
+                    if (ace is not CommonAce common)
                     {
                         known = false;
                         continue;
                     }
 
-                    if (common.AceQualifier != AceQualifier.AccessAllowed || common.AceFlags.HasFlag(AceFlags.InheritOnly))
-                    {
-                        continue;
-                    }
-
-                    bool trusted = common.SecurityIdentifier.Value == ownerSid || common.SecurityIdentifier.Value == LocalSystemSid;
-                    if (trusted) { continue; }
-                    untrustedWrite |= AllowsUntrustedMutation(common.AccessMask);
-                    untrustedReplacement |= AllowsUntrustedReplacement(common.AccessMask);
+                    aces.Add(new(common.SecurityIdentifier.Value, common.AccessMask,
+                        common.AceQualifier == AceQualifier.AccessAllowed, common.AceFlags.HasFlag(AceFlags.InheritOnly), common.IsCallback));
                 }
             }
 
-            return new(role, descriptor.Owner?.Value, known, security.AreAccessRulesProtected,
-                (attributes & FileAttributes.ReparsePoint) != 0, untrustedWrite, untrustedReplacement);
+            OwnerTokenPathEvidence evidence = ClassifyPathEvidence(role, descriptor.Owner?.Value, security.AreAccessRulesProtected,
+                (attributes & FileAttributes.ReparsePoint) != 0, aces, ownerSid);
+            return evidence with { AclKnown = evidence.AclKnown && known };
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static string CaptureCurrentVmIdentityHash()
+        {
+            using RegistryKey? bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+            string[] values =
+            [
+                ReadRegistryString(bios, "SystemManufacturer"),
+                ReadRegistryString(bios, "SystemProductName"),
+                ReadRegistryString(bios, "BaseBoardManufacturer"),
+                ReadRegistryString(bios, "BaseBoardProduct"),
+                ReadRegistryString(bios, "BIOSVendor"),
+                ReadRegistryString(bios, "BIOSVersion")
+            ];
+            return !values.Any(string.IsNullOrWhiteSpace)
+                ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("|", values)))).ToLowerInvariant() : throw Refused();
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static string ReadRegistryString(RegistryKey? key, string name)
+        {
+            return key?.GetValue(name)?.ToString() ?? "";
+        }
+
+        private static bool TrustedAce(string role, string sid, string ownerSid)
+        {
+            return sid == ownerSid || sid == LocalSystemSid || (role == OwnerTokenPathEvidence.GlobalParentRole
+                && (sid == AdministratorsSid || sid.StartsWith("S-1-5-80-", StringComparison.Ordinal)));
         }
 
         private static bool AllowsUntrustedMutation(int accessMask)
@@ -385,9 +451,9 @@ namespace Guard.WindowsPoc.Safety
             return sid == ownerSid || sid == LocalSystemSid;
         }
 
-        private static bool TrustedAncestorOwner(string? sid)
+        private static bool TrustedGlobalParentOwner(string? sid)
         {
-            return sid == LocalSystemSid || sid == "S-1-5-32-544" || (sid?.StartsWith("S-1-5-80-", StringComparison.Ordinal) ?? false);
+            return sid == LocalSystemSid || sid == AdministratorsSid || (sid?.StartsWith("S-1-5-80-", StringComparison.Ordinal) ?? false);
         }
 
         private static InvalidOperationException Refused()
@@ -396,5 +462,7 @@ namespace Guard.WindowsPoc.Safety
         }
 
         private sealed record ProofEnvelope(int Version, string OwnerSid, string OwnerTokenSid, string Nonce, string ExpectedVmName, string VmIdentityHash);
+        private sealed record VmMarkerEnvelope(int Version, string Nonce, string ExpectedVmName, string VmIdentityHash);
+        private sealed record NativeVmMarker(string Nonce, string ExpectedVmName, string VmIdentityHash);
     }
 }

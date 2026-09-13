@@ -53,13 +53,13 @@ function New-DirectoryExact([string] $path) {
     if ($PSCmdlet.ShouldProcess($path, 'Create protected directory')) { New-Item -ItemType Directory -Path $path -Force:$false -ErrorAction Stop | Out-Null }
 }
 function Get-RelativeFixturePath([string] $root, [string] $path) {
-    $prefix = $root.TrimEnd('\\') + '\\'
+    $prefix = $root.TrimEnd('\') + '\'
     if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { Fail 'Fixture path escaped root.' }
-    return $path.Substring($prefix.Length).Replace('/', '\\')
+    return $path.Substring($prefix.Length).Replace('/', '\')
 }
-function Test-CurrentVmBinding($input) {
+function Test-CurrentVmBinding($protectedInputs) {
     $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-    if ($computer.Manufacturer -notin @('innotek GmbH', 'Oracle Corporation', 'QEMU') -or [string]::IsNullOrWhiteSpace($input.Nonce)) { Fail 'Current VM binding mismatch.' }
+    if ($computer.Manufacturer -notin @('innotek GmbH', 'Oracle Corporation', 'QEMU') -or [string]::IsNullOrWhiteSpace($protectedInputs.Nonce)) { Fail 'Current VM binding mismatch.' }
     # The controller repeats the production OwnerTokenAttestation firmware/UUID and retained-DACL proof before any mutation.
     if (-not (Test-Path -LiteralPath $vmMarkerPath) -or -not (Test-Path -LiteralPath $ownerProofPath)) { Fail 'Protected attestation absent.' }
 }
@@ -92,20 +92,20 @@ function Read-RetainedProtectedInput([string] $path) {
     } finally { $stream.Dispose() }
 }
 function Validate-Watchdog($task) {
-    if ($null -eq $task -or $task.TaskName -ne $recoveryName -or $task.TaskPath -ne '\\' -or $task.Principal.UserId -ne 'SYSTEM' -or $task.Principal.LogonType -ne 'ServiceAccount' -or $task.Principal.RunLevel -ne 'Highest' -or $task.Settings.MultipleInstances -ne 'IgnoreNew' -or $task.Settings.ExecutionTimeLimit -ne 'PT2M' -or $task.Actions.Count -ne 1 -or $task.Actions[0].Execute -ne 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -or $task.Actions[0].Arguments -ne '-NoProfile -NonInteractive -File "C:\ProgramData\ComsPcGuardPoc\Scripts\Resume-ComsPocRecovery.ps1" -AllowWrite' -or $task.Actions[0].WorkingDirectory -ne $scriptsRoot -or $task.Triggers.Count -ne 2) { Fail 'Watchdog definition mismatch.' }
+    if ($null -eq $task -or $task.TaskName -ne $recoveryName -or $task.TaskPath -ne '\' -or $task.Principal.UserId -ne 'SYSTEM' -or $task.Principal.LogonType -ne 'ServiceAccount' -or $task.Principal.RunLevel -ne 'Highest' -or $task.Settings.MultipleInstances -ne 'IgnoreNew' -or $task.Settings.ExecutionTimeLimit -ne 'PT2M' -or $task.Actions.Count -ne 1 -or $task.Actions[0].Execute -ne 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -or $task.Actions[0].Arguments -ne '-NoProfile -NonInteractive -File "C:\ProgramData\ComsPcGuardPoc\Scripts\Resume-ComsPocRecovery.ps1" -AllowWrite' -or $task.Actions[0].WorkingDirectory -ne $scriptsRoot -or $task.Triggers.Count -ne 2) { Fail 'Watchdog definition mismatch.' }
     if (@($task.Triggers | Where-Object { $_.Enabled -and $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' }).Count -ne 1 -or @($task.Triggers | Where-Object { $_.Enabled -and $_.Repetition.Interval -eq 'PT1M' }).Count -ne 1) { Fail 'Watchdog trigger mismatch.' }
 }
-function Assert-ExistingDeployment($input) {
+function Assert-ExistingDeployment($protectedInputs) {
     foreach ($path in @($controllerPath, $closurePath, $controllerConfigPath, $recoveryPath, (Join-Path $fixtureRoot 'target.exe'), (Join-Path $fixtureRoot 'control.exe'))) { Assert-NoReparse $path }
     $config = Get-Content -LiteralPath $controllerConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    if ($config.Version -ne 1 -or $config.OwnerSid -ne $input.OwnerSid -or $config.Nonce -ne $input.Nonce -or $config.MemberSids.Count -ne 2 -or $config.MemberSids[0] -ne $input.MemberSids[0] -or $config.MemberSids[1] -ne $input.MemberSids[1]) { Fail 'Existing deployment mismatch.' }
+    if ($config.Version -ne 1 -or $config.OwnerSid -ne $protectedInputs.OwnerSid -or $config.Nonce -ne $protectedInputs.Nonce -or $config.MemberSids.Count -ne 2 -or $config.MemberSids[0] -ne $protectedInputs.MemberSids[0] -or $config.MemberSids[1] -ne $protectedInputs.MemberSids[1]) { Fail 'Existing deployment mismatch.' }
     $closure = Get-Content -LiteralPath $closurePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     if ($closure.Version -ne 1 -or $closure.RuntimeIdentifier -ne 'win-x64' -or $closure.Files.PSObject.Properties.Count -gt 512) { Fail 'Existing deployment mismatch.' }
     foreach ($name in @('target.exe', 'control.exe')) { if ($closure.Files.PSObject.Properties.Name -notcontains $name -or (Get-Sha256 (Join-Path $fixtureRoot $name)) -ne $closure.Files.$name) { Fail 'Existing deployment mismatch.' } }
     $targetSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $fixtureRoot 'target.exe') -ErrorAction Stop
     $controlSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $fixtureRoot 'control.exe') -ErrorAction Stop
     if ($targetSignature.Status -ne 'Valid' -or $controlSignature.Status -ne 'Valid' -or $targetSignature.SignerCertificate.Thumbprint -ne $controlSignature.SignerCertificate.Thumbprint) { Fail 'Existing deployment mismatch.' }
-    Validate-Watchdog (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\\' -ErrorAction Stop)
+    Validate-Watchdog (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction Stop)
 }
 function Set-ProtectedAcl([string] $path, [string] $ownerSid, [string[]] $memberSids, [switch] $Fixture) {
     Assert-NoReparse $path
@@ -149,7 +149,7 @@ function Publish-Controller([string] $sourceRoot) {
     New-DirectoryExact $controllerRoot
     Get-ChildItem -LiteralPath $stage -File -Recurse -ErrorAction Stop | ForEach-Object {
         $relative = Get-RelativeFixturePath $stage $_.FullName; $destination = Join-Path $controllerRoot $relative
-        New-DirectoryExact (Split-Path -LiteralPath $destination -Parent); Assert-ExactFile $_.FullName $destination
+        New-DirectoryExact (Split-Path -Path $destination -Parent); Assert-ExactFile $_.FullName $destination
     }
     if (-not (Test-Path -LiteralPath $controllerPath)) { Fail 'Controller executable absent.' }
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction Stop
@@ -163,7 +163,7 @@ function Merge-FixturePublish([string] $sourceRoot, [string] $projectRelative, [
         $relative = Get-RelativeFixturePath $stage $_.FullName
         if ($relative -eq $sourceAppHostName) { $relative = $appHostName }
         if (-not $expectedFixtureFiles.Add($relative)) { Assert-ExactFile $_.FullName (Join-Path $fixtureRoot $relative); return }
-        $destination = Join-Path $fixtureRoot $relative; New-DirectoryExact (Split-Path -LiteralPath $destination -Parent); Assert-ExactFile $_.FullName $destination
+        $destination = Join-Path $fixtureRoot $relative; New-DirectoryExact (Split-Path -Path $destination -Parent); Assert-ExactFile $_.FullName $destination
     }
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction Stop
 }
@@ -234,8 +234,8 @@ function Write-Closure {
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 65536) { Fail 'Fixture closure byte bound.' }
     if (Test-Path -LiteralPath $closurePath) { if ((Get-Content -LiteralPath $closurePath -Raw -ErrorAction Stop) -ne $json) { Fail 'Existing fixture closure differs.' } } elseif ($PSCmdlet.ShouldProcess($closurePath, 'Write fixture closure')) { [IO.File]::WriteAllText($closurePath, $json, [Text.UTF8Encoding]::new($false)) }
 }
-function Write-ControllerConfig($input) {
-    $json = [ordered]@{ Version = 1; OwnerSid = $input.OwnerSid; MemberSids = @($input.MemberSids[0], $input.MemberSids[1]); Nonce = $input.Nonce; ExpectedVmName = 'COMS-PC-Guard-x64-Lab'; FixtureRoot = $fixtureRoot } | ConvertTo-Json -Compress
+function Write-ControllerConfig($protectedInputs) {
+    $json = [ordered]@{ Version = 1; OwnerSid = $protectedInputs.OwnerSid; MemberSids = @($protectedInputs.MemberSids[0], $protectedInputs.MemberSids[1]); Nonce = $protectedInputs.Nonce; ExpectedVmName = 'COMS-PC-Guard-x64-Lab'; FixtureRoot = $fixtureRoot } | ConvertTo-Json -Compress
     if (Test-Path -LiteralPath $controllerConfigPath) { if ((Get-Content -LiteralPath $controllerConfigPath -Raw -ErrorAction Stop) -ne $json) { Fail 'Existing controller configuration differs.' } } elseif ($PSCmdlet.ShouldProcess($controllerConfigPath, 'Write controller configuration')) { [IO.File]::WriteAllText($controllerConfigPath, $json, [Text.UTF8Encoding]::new($false)) }
 }
 function Install-Watchdog {

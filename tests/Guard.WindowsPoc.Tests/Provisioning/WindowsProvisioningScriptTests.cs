@@ -28,6 +28,10 @@ namespace Guard.WindowsPoc.Tests.Provisioning
             Assert.IsFalse(script.Contains(" ? ", StringComparison.Ordinal), "Windows PowerShell 5.1 has no ternary operator.");
             Assert.IsFalse(script.Contains("Path]::GetRelativePath", StringComparison.Ordinal), ".NET Framework lacks Path.GetRelativePath.");
             Assert.IsFalse(script.Contains("New-Item -ItemType Directory -LiteralPath", StringComparison.Ordinal), "New-Item does not support LiteralPath in Windows PowerShell 5.1.");
+            Assert.IsFalse(script.Contains("Split-Path -LiteralPath", StringComparison.Ordinal), "Split-Path cannot combine LiteralPath and Parent in Windows PowerShell 5.1.");
+            int inputIndex = script.IndexOf("$" + "input", StringComparison.OrdinalIgnoreCase);
+            Assert.IsTrue(inputIndex < 0 || (inputIndex + 6 < script.Length && (char.IsLetterOrDigit(script[inputIndex + 6]) || script[inputIndex + 6] == '_')), "Automatic input enumerator must never be shadowed.");
+            StringAssert.Contains(script, "TaskPath -ne '\\'");
         }
 
         [TestMethod]

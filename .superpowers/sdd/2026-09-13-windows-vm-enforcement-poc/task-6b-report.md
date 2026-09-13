@@ -40,3 +40,20 @@
 - PASS: default and `TZ=UTC` Release suites: Core 117, Service 148, Windows PoC 206 passed; two Windows-only native tests skipped in each run.
 - PASS: PowerShell AST parse and `git diff --check`.
 - NOT_RUN_WINDOWS_ONLY: WindowsPowerShell 5.1 execution, certificate/store, Authenticode/AppLocker, ACL, scheduled-task, and VM-native attestation acceptance.
+
+## Fix round 2
+
+### RED
+
+- Added PS 5.1 contract assertions for the automatic `$input` enumerator, `Split-Path` parameter-set compatibility, and the exact single-backslash scheduled-task path. The focused contract test failed on the remaining automatic-variable collision before the script was corrected.
+
+### Changes
+
+- Replaced incompatible `Split-Path -LiteralPath ... -Parent`, renamed automatic-variable-colliding function parameters, and corrected task lookup/validation to the single root task path.
+- Kept the existing retained-input and proof-only deployment path, and preserved no-ternary/no-`Path.GetRelativePath` compatibility constraints.
+
+### Commands/results
+
+- PASS: focused provisioning contract tests after the correction.
+- PASS: PowerShell AST parse and `git diff --check`.
+- Native Windows acceptance remains NOT_RUN_WINDOWS_ONLY.

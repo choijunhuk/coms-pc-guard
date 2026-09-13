@@ -91,6 +91,10 @@ namespace Guard.WindowsPoc.Recovery
                 ? currentPrincipalSid
                 : throw new InvalidOperationException("Policy gate creation requires a validated Owner or SYSTEM principal.");
         }
+        internal static bool CanBootstrapGlobalGate(string? currentPrincipalSid)
+        {
+            return currentPrincipalSid == "S-1-5-18";
+        }
         internal static void ValidateSecurity(string ownerSid, string? actualOwner, bool known, IReadOnlyList<PolicyGateAccess> rules)
         {
             ValidateOwner(ownerSid);
@@ -170,7 +174,15 @@ namespace Guard.WindowsPoc.Recovery
                 { security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid), (MutexRights)RequiredRights, AccessControlType.Allow)); }
                 Mutex mutex;
                 try { mutex = MutexAcl.OpenExisting(Name, (MutexRights)RequiredRights); }
-                catch (WaitHandleCannotBeOpenedException) { mutex = MutexAcl.Create(false, Name, out _, security); }
+                catch (WaitHandleCannotBeOpenedException)
+                {
+                    if (!CanBootstrapGlobalGate(creationOwnerSid)) { throw new InvalidOperationException("SYSTEM policy gate bootstrap is required before Owner access."); }
+                    mutex = MutexAcl.Create(false, Name, out _, security);
+                }
+                catch (UnauthorizedAccessException) when (!CanBootstrapGlobalGate(creationOwnerSid))
+                {
+                    throw new InvalidOperationException("SYSTEM policy gate bootstrap is required before Owner access.");
+                }
                 NativeMutex backend = new(mutex, ownerSid);
                 try { backend.Validate(); return backend; }
                 catch { backend.Dispose(); throw; }

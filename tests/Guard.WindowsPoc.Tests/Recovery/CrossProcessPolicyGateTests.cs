@@ -56,6 +56,8 @@ namespace Guard.WindowsPoc.Tests.Recovery
             Assert.AreEqual(Owner, CrossProcessPolicyGate.ValidateNativeOwnerAndReadPrincipal(Owner, () => false, () => Owner));
             Assert.AreEqual(SystemSid, CrossProcessPolicyGate.ValidateCreationOwner(Owner, SystemSid));
             Assert.AreEqual(Owner, CrossProcessPolicyGate.ValidateCreationOwner(Owner, Owner));
+            Assert.IsTrue(CrossProcessPolicyGate.CanBootstrapGlobalGate(SystemSid));
+            Assert.IsFalse(CrossProcessPolicyGate.CanBootstrapGlobalGate(Owner));
 
             foreach (string? principal in new[] { null, "S-1-5-32-544", "S-1-5-21-1-2-3-1002" })
             {
@@ -180,6 +182,11 @@ namespace Guard.WindowsPoc.Tests.Recovery
                 return;
             }
             string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+            if (sid != SystemSid)
+            {
+                _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => new CrossProcessPolicyGate(sid).RunAsync(() => Task.FromResult(1), CancellationToken.None));
+                return;
+            }
             CrossProcessPolicyGate first = new(sid), second = new(sid);
             int active = 0;
             async Task<int> Action() { Assert.AreEqual(1, Interlocked.Increment(ref active)); await Task.Delay(30); return Interlocked.Decrement(ref active); }

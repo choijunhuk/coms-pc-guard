@@ -1,4 +1,5 @@
 using Guard.WindowsPoc.Inventory;
+using Guard.WindowsPoc.Recovery;
 using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Native
@@ -34,7 +35,20 @@ namespace Guard.WindowsPoc.Native
             return presence is PolicyPresence.Absent or PolicyPresence.External;
         }
     }
-    public sealed record WindowsCommandRequest(WindowsCommand Command, string? PolicyXml = null, PolicyMutationDecision? Decision = null);
+    public sealed record WindowsCommandRequest(WindowsCommand Command, string? PolicyXml = null, PolicyMutationDecision? Decision = null)
+    {
+        internal PocTransactionJournal? Journal { get; init; }
+        internal static WindowsCommandRequest Apply(PocTransactionJournal journal)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            return new(WindowsCommand.Apply) { Journal = journal };
+        }
+        internal static WindowsCommandRequest Restore(PocTransactionJournal journal)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            return new(WindowsCommand.Restore) { Journal = journal };
+        }
+    }
     public sealed record WindowsCommandResult(AppLockerNativeSnapshot? Snapshot);
 
     public interface IWindowsCommandRunner

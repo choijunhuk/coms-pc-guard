@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
+using Guard.WindowsPoc.Recovery;
 
 namespace Guard.WindowsPoc.Native
 {
@@ -12,17 +13,20 @@ namespace Guard.WindowsPoc.Native
         private const string Root = @"C:\ProgramData\ComsPcGuardPoc";
         private readonly IScriptTrustVerifier _trust;
         private readonly Func<ProcessStartInfo, Action, CancellationToken, Task<string>> _execute;
+        private readonly Func<ProcessStartInfo, Action, CancellationToken, Task<string>> _executeMutation;
         private readonly TimeSpan _timeout;
         public PowerShellCommandRunner()
         {
             _trust = new WindowsScriptTrustVerifier();
             _execute = ExecuteAsync;
+            _executeMutation = (info, _, token) => ExecuteProcessAsync(info, token);
             _timeout = TimeSpan.FromSeconds(30);
         }
         internal PowerShellCommandRunner(IScriptTrustVerifier trust, Func<ProcessStartInfo, CancellationToken, Task<string>> execute, TimeSpan? timeout = null)
         {
             _trust = trust;
             _execute = (info, _, token) => execute(info, token);
+            _executeMutation = _execute;
             _timeout = timeout ?? TimeSpan.FromSeconds(30);
             if (_timeout <= TimeSpan.Zero || _timeout > TimeSpan.FromSeconds(30)) { throw new ArgumentOutOfRangeException(nameof(timeout)); }
         }
@@ -134,7 +138,14 @@ namespace Guard.WindowsPoc.Native
 
         public static ProcessStartInfo CreateStartInfo(WindowsCommand command, string? policyPath = null)
         {
-            string script = command switch { WindowsCommand.Capture => "Get-ComsPocInventory.ps1", WindowsCommand.Observe => "Observe.ps1", WindowsCommand.Apply => "Apply.ps1", WindowsCommand.Restore => "Restore.ps1", _ => throw new ArgumentOutOfRangeException(nameof(command)) };
+            string script = command switch
+            {
+                WindowsCommand.Capture => "Get-ComsPocInventory.ps1",
+                WindowsCommand.Observe => "Get-ComsPocInventory.ps1",
+                WindowsCommand.Apply => "Set-ComsPocPolicy.ps1",
+                WindowsCommand.Restore => "Remove-ComsPocPolicy.ps1",
+                _ => throw new ArgumentOutOfRangeException(nameof(command))
+            };
             bool mutation = command is WindowsCommand.Apply or WindowsCommand.Restore;
             if (mutation && (policyPath is null || !policyPath.StartsWith(Root + @"\", StringComparison.Ordinal)
                 || policyPath[(Root.Length + 1)..].Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '.' and not '-')))
@@ -170,17 +181,65 @@ namespace Guard.WindowsPoc.Native
         {
             ArgumentNullException.ThrowIfNull(request);
             cancellationToken.ThrowIfCancellationRequested();
-            if (request.Command != WindowsCommand.Capture || request.PolicyXml is not null || request.Decision is not null)
+            if (request.Command == WindowsCommand.Capture && request.PolicyXml is null && request.Decision is null && request.Journal is null)
+            {
+                using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(_timeout);
+                using IScriptTrustLease lease = _trust.Verify(WindowsScriptTrustVerifier.ScriptPathFor(WindowsCommand.Capture));
+                ProcessStartInfo info = CreateStartInfo(WindowsCommand.Capture);
+                timeout.Token.ThrowIfCancellationRequested();
+                lease.Revalidate();
+                string json = await _execute(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
+                AppLockerNativeSnapshot snapshot = ParseSnapshot(json);
+                return !snapshot.IsComplete ? throw new InvalidOperationException("Native inventory unavailable.") : new(snapshot);
+            }
+            if (request.Command is WindowsCommand.Apply or WindowsCommand.Restore && request.PolicyXml is null && request.Decision is null
+                && request.Journal is { Phase: PocJournalPhase.WritePending } journal)
+            {
+                using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(_timeout);
+                string scriptPath = WindowsScriptTrustVerifier.ScriptPathFor(request.Command);
+                using IScriptTrustLease lease = _trust.Verify(scriptPath);
+                string payload = request.Command == WindowsCommand.Apply ? journal.After.LocalPolicyXml : journal.After.LocalPolicyXml;
+                string payloadPath = CreatePayloadPath();
+                try
+                {
+                    await WritePayloadIfNativeAsync(payloadPath, payload, timeout.Token).ConfigureAwait(false);
+                    ProcessStartInfo info = CreateStartInfo(request.Command, payloadPath);
+                    timeout.Token.ThrowIfCancellationRequested();
+                    lease.Revalidate();
+                    string json = await _executeMutation(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
+                    return string.IsNullOrWhiteSpace(json) ? new(null) : new(ParseSnapshot(json));
+                }
+                finally { DeletePayloadIfNative(payloadPath); }
+            }
+            if (request.Command != WindowsCommand.Capture || request.PolicyXml is not null || request.Decision is not null || request.Journal is not null)
             { throw new InvalidOperationException("Only trusted read-only capture is available."); }
-            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(_timeout);
-            using IScriptTrustLease lease = _trust.Verify(WindowsScriptTrustVerifier.ScriptPath);
-            ProcessStartInfo info = CreateStartInfo(WindowsCommand.Capture);
-            timeout.Token.ThrowIfCancellationRequested();
-            lease.Revalidate();
-            string json = await _execute(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
-            AppLockerNativeSnapshot snapshot = ParseSnapshot(json);
-            return !snapshot.IsComplete ? throw new InvalidOperationException("Native inventory unavailable.") : new(snapshot);
+            throw new InvalidOperationException("Only trusted read-only capture is available.");
+        }
+
+        private static string CreatePayloadPath()
+        {
+            return Root + @"\" + Guid.NewGuid().ToString("N") + ".xml";
+        }
+
+        private static async Task WritePayloadIfNativeAsync(string path, string xml, CancellationToken token)
+        {
+            if (!OperatingSystem.IsWindows()) { return; }
+            _ = Directory.CreateDirectory(Root);
+            await using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            byte[] bytes = Encoding.UTF8.GetBytes(xml);
+            if (bytes.Length > 1_000_000) { throw new InvalidOperationException("Policy mutation refused."); }
+            await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+            await stream.FlushAsync(token).ConfigureAwait(false);
+            stream.Flush(flushToDisk: true);
+        }
+
+        private static void DeletePayloadIfNative(string path)
+        {
+            if (!OperatingSystem.IsWindows()) { return; }
+            try { File.Delete(path); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { throw new InvalidOperationException("Policy payload cleanup unavailable."); }
         }
 
         public static AppLockerNativeSnapshot ParseSnapshot(string json)

@@ -125,7 +125,7 @@ namespace Guard.WindowsPoc.Tests.Native
         {
             System.Diagnostics.ProcessStartInfo info = PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Apply, @"C:\ProgramData\ComsPcGuardPoc\payload.xml");
             Assert.IsFalse(info.UseShellExecute);
-            string[] expected = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", @"C:\ProgramData\ComsPcGuardPoc\Scripts\Apply.ps1", "-PolicyPath", @"C:\ProgramData\ComsPcGuardPoc\payload.xml"];
+            string[] expected = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", @"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", "-PolicyPath", @"C:\ProgramData\ComsPcGuardPoc\payload.xml"];
             CollectionAssert.AreEqual(expected, info.ArgumentList.ToArray());
             _ = Assert.Throws<ArgumentException>(() => PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Apply, "<xml>;evil"));
         }

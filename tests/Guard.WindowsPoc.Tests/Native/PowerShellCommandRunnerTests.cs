@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
+using Guard.WindowsPoc.Recovery;
 
 namespace Guard.WindowsPoc.Tests.Native
 {
@@ -234,6 +235,35 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task JournaledApplyRunsFixedMutationScriptFromWritePendingJournal()
+        {
+            Trust trust = new();
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            string? payloadPath = null;
+            PowerShellCommandRunner runner = new(trust, (info, token) =>
+            {
+                Assert.IsTrue(trust.Checked);
+                Assert.IsFalse(trust.Disposed);
+                Assert.IsFalse(info.UseShellExecute);
+                Assert.Contains(@"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", info.ArgumentList);
+                Assert.Contains("-PolicyPath", info.ArgumentList);
+                payloadPath = info.ArgumentList[info.ArgumentList.IndexOf("-PolicyPath") + 1];
+                Assert.StartsWith(@"C:\ProgramData\ComsPcGuardPoc\", payloadPath);
+                Assert.EndsWith(".xml", payloadPath);
+                Assert.DoesNotContain("AppLockerPolicy", string.Join(" ", info.ArgumentList));
+                Assert.IsTrue(token.CanBeCanceled);
+                return Task.FromResult(Complete);
+            });
+            Assert.IsTrue((await runner.RunAsync(WindowsCommandRequest.Apply(journal), CancellationToken.None)).Snapshot!.IsComplete);
+            Assert.IsNotNull(payloadPath);
+            Assert.IsTrue(trust.Disposed);
+        }
+
+        [TestMethod]
         public async Task RefusesWritesAndChangedTrustWithoutStartingChild()
         {
             foreach (WindowsCommand command in new[] { WindowsCommand.Apply, WindowsCommand.Restore, WindowsCommand.Observe })
@@ -376,6 +406,12 @@ namespace Guard.WindowsPoc.Tests.Native
             AppLockerNativeSnapshot snapshot = PowerShellCommandRunner.ParseSnapshot(noInventory.ToJsonString());
             Assert.AreEqual(PolicyPresence.Unknown, snapshot.Inventory.CspMdm);
             Assert.IsFalse(snapshot.IsComplete);
+        }
+
+        private static AppLockerPolicySnapshot Snapshot(string xml)
+        {
+            return new(new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), xml, xml,
+                PolicyPresence.Absent, PolicyPresence.Absent, true, true);
         }
     }
 }

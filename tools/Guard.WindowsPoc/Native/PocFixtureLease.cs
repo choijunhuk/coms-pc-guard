@@ -206,8 +206,9 @@ namespace Guard.WindowsPoc.Native
             public PocFixturePublisherEvidence ReadPublisher(FileStream target)
             {
                 if (!OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException("Authenticode fixture evidence is Windows-only."); }
-                (string output, string error, int exitCode) = ExecuteBounded(CreateStartInfo(target.Name), TimeSpan.FromSeconds(10), 16_384);
-                if (exitCode != 0) { throw new InvalidOperationException("Authenticode fixture evidence unavailable: " + error.Trim()); }
+                using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(10));
+                string output = PowerShellCommandRunner.ExecutePowerShellProcessAsync(CreateStartInfo(target.Name), deadline.Token,
+                    maximumOutputCharacters: 16_384).GetAwaiter().GetResult();
                 PublisherRecord record = JsonSerializer.Deserialize<PublisherRecord>(output) ?? throw new InvalidOperationException("Authenticode fixture evidence unavailable.");
                 return new(record.Publisher ?? "", record.Product ?? "", record.Binary ?? Path.GetFileName(target.Name),
                     ParseVersion(record.LowVersion), ParseVersion(record.HighVersion))

@@ -51,7 +51,7 @@ namespace Guard.WindowsPoc.Tests.Provisioning
             DirectoryInfo? cursor = new(AppContext.BaseDirectory);
             while (cursor is not null && !File.Exists(Path.Combine(cursor.FullName, "ComsPcGuard.sln"))) { cursor = cursor.Parent; }
             Assert.IsNotNull(cursor, "Repository root not found.");
-            return File.ReadAllText(Path.Combine(cursor!.FullName, "scripts", "windows", name));
+            return File.ReadAllText(Path.Combine(cursor.FullName, "scripts", "windows", name));
         }
     }
 }

@@ -40,15 +40,30 @@ namespace Guard.WindowsPoc.Native
             return await ExecuteInventoryProcessesAsync(provider, info, revalidate, cancellationToken).ConfigureAwait(false);
         }
 
-        internal static async Task<string> ExecuteProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken, string? input = null)
+        internal static Task<string> ExecuteProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken, string? input = null)
         {
+            return ExecuteProcessCoreAsync(info, input, false, false, 2_000_000, cancellationToken);
+        }
+
+        internal static Task<string> ExecutePowerShellProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken,
+            string? input = null, int maximumOutputCharacters = 2_000_000)
+        {
+            return info.FileName == PowerShellStartupProgress.Executable
+                ? ExecuteProcessCoreAsync(info, input, true, false, maximumOutputCharacters, cancellationToken)
+                : throw new InvalidOperationException("Fixed Windows PowerShell required.");
+        }
+
+        private static async Task<string> ExecuteProcessCoreAsync(ProcessStartInfo info, string? input,
+            bool powerShell, bool mutation, int maximumOutputCharacters, CancellationToken cancellationToken)
+        {
+            if (maximumOutputCharacters is <= 0 or > 2_000_000) { throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters)); }
             using Process process = new() { StartInfo = info };
             cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) { throw new InvalidOperationException("Native inventory unavailable."); }
             try
             {
-                Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken);
-                Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken);
+                Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken, maximumOutputCharacters);
+                Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken, powerShell ? PowerShellStartupProgress.MaximumCharacters : 2_000_000);
                 if (info.RedirectStandardInput)
                 {
                     if (input is not null) { await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false); }
@@ -56,9 +71,15 @@ namespace Guard.WindowsPoc.Native
                 }
                 _ = await Task.WhenAll(stdout, stderr).WaitAsync(cancellationToken).ConfigureAwait(false);
                 await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-                return process.ExitCode != 0 || stderr.Result.Length != 0
-                    ? throw new InvalidOperationException("Native inventory unavailable.")
-                    : stdout.Result;
+                bool acceptableStderr = powerShell
+                    ? PowerShellStartupProgress.Accepts(info.FileName, process.ExitCode, stderr.Result)
+                    : stderr.Result.Length == 0;
+                return process.ExitCode switch
+                {
+                    3 when mutation => throw new PocPolicyDriftException(),
+                    0 when acceptableStderr => stdout.Result,
+                    _ => throw new InvalidOperationException("Native inventory unavailable.")
+                };
             }
             finally
             {
@@ -77,32 +98,11 @@ namespace Guard.WindowsPoc.Native
             }
         }
 
-        internal static async Task<string> ExecuteMutationProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken)
+        internal static Task<string> ExecuteMutationProcessAsync(ProcessStartInfo info, CancellationToken cancellationToken)
         {
-            using Process process = new() { StartInfo = info };
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!process.Start()) { throw new InvalidOperationException("Policy mutation refused."); }
-            try
-            {
-                Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken);
-                Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken);
-                if (info.RedirectStandardInput) { process.StandardInput.Close(); }
-                _ = await Task.WhenAll(stdout, stderr).WaitAsync(cancellationToken).ConfigureAwait(false);
-                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-                return stderr.Result.Length != 0 || process.ExitCode is not (0 or 3)
-                    ? throw new InvalidOperationException("Policy mutation refused.")
-                    : stdout.Result;
-            }
-            finally
-            {
-                try { await CleanupProcessAsync(process).ConfigureAwait(false); }
-                finally
-                {
-                    process.StandardOutput.Dispose();
-                    process.StandardError.Dispose();
-                    if (info.RedirectStandardInput) { process.StandardInput.Dispose(); }
-                }
-            }
+            return info.FileName == PowerShellStartupProgress.Executable
+                ? ExecuteProcessCoreAsync(info, null, true, true, 2_000_000, cancellationToken)
+                : throw new InvalidOperationException("Fixed Windows PowerShell required.");
         }
 
         private static async Task CleanupProcessAsync(Process process)
@@ -130,7 +130,9 @@ namespace Guard.WindowsPoc.Native
             catch (JsonException) { throw new InvalidOperationException("Native inventory unavailable."); }
             cancellationToken.ThrowIfCancellationRequested();
             revalidate();
-            return await ExecuteProcessAsync(inventory, cancellationToken, evidence).ConfigureAwait(false);
+            return inventory.FileName == PowerShellStartupProgress.Executable
+                ? await ExecutePowerShellProcessAsync(inventory, cancellationToken, evidence).ConfigureAwait(false)
+                : await ExecuteProcessAsync(inventory, cancellationToken, evidence).ConfigureAwait(false);
         }
 
         internal static ProcessStartInfo CreateCiToolStartInfo()
@@ -142,14 +144,14 @@ namespace Guard.WindowsPoc.Native
             return info;
         }
 
-        internal static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken cancellationToken)
+        internal static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken cancellationToken, int maximumCharacters = 2_000_000)
         {
             StringBuilder result = new();
             char[] buffer = new char[4096];
             int count;
             while ((count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) != 0)
             {
-                if (result.Length + count > 2_000_000) { throw new InvalidOperationException("Native inventory unavailable."); }
+                if (result.Length + count > maximumCharacters) { throw new InvalidOperationException("Native inventory unavailable."); }
                 _ = result.Append(buffer, 0, count);
             }
             return result.ToString();

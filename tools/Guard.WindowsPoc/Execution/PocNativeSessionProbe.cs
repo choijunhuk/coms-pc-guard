@@ -56,7 +56,7 @@ namespace Guard.WindowsPoc.Execution
                         ProcessStartInfo info = CreateCollectStartInfo();
                         using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
                         deadline.CancelAfter(TimeSpan.FromSeconds(10));
-                        string json = await PowerShellCommandRunner.ExecuteProcessAsync(info, deadline.Token, JsonSerializer.Serialize(request)).ConfigureAwait(false);
+                        string json = await PowerShellCommandRunner.ExecutePowerShellProcessAsync(info, deadline.Token, JsonSerializer.Serialize(request)).ConfigureAwait(false);
                         if (json.Length > 262144) { return false; }
                         ProbeEnvelope evidence = JsonSerializer.Deserialize<ProbeEnvelope>(json, JsonOptions) ?? throw new InvalidOperationException("Probe evidence unavailable.");
                         lease.Revalidate(); revalidate();

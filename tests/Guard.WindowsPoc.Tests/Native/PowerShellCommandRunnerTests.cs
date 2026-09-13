@@ -122,7 +122,9 @@ namespace Guard.WindowsPoc.Tests.Native
             foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
             { info.ArgumentList.Add(argument); }
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-            string json = await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
+            string json = OperatingSystem.IsWindows()
+                ? await PowerShellCommandRunner.ExecutePowerShellProcessAsync(info, timeout.Token)
+                : await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
             JsonObject output = JsonNode.Parse(json)!.AsObject();
             Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
             Assert.IsTrue(PowerShellCommandRunner.ParseSnapshot(json).IsComplete);
@@ -159,7 +161,10 @@ namespace Guard.WindowsPoc.Tests.Native
             foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
             { info.ArgumentList.Add(argument); }
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-            string[] revisions = (await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token)).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            string output = OperatingSystem.IsWindows()
+                ? await PowerShellCommandRunner.ExecutePowerShellProcessAsync(info, timeout.Token)
+                : await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
+            string[] revisions = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             Assert.AreEqual(2, revisions.Length);
             Assert.AreEqual(revisions[0], revisions[1]);
             Assert.AreEqual(64, revisions[0].Length);

@@ -44,7 +44,7 @@ namespace Guard.WindowsPoc.Native
             _stateLease.Revalidate();
             if (durable != journal || journal.Phase != PocJournalPhase.WritePending
                 || trustedCurrent.RawLocalPolicySha256 is null || !trustedCurrent.IsReady(_clock.GetUtcNow())
-                || hostRecovery || recoveryBarrier != PocRecoveryBarrier.ValidationComplete || !writePendingProof
+                || hostRecovery || recoveryBarrier != PocRecoveryBarrier.Capture || !writePendingProof
                 || !_attestation.Attested || !_attestation.AllowWrite || !_elevated
                 || (!restore && trustedCurrent.NativeRevision != _decision.InventoryRevision))
             {
@@ -56,6 +56,8 @@ namespace Guard.WindowsPoc.Native
                 _ = journal.Recognizes(trustedCurrent) && !trustedCurrent.SamePolicy(journal.InitialBaseline)
                     ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
                 _fixtureLease.Revalidate(_decision);
+                await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token).ConfigureAwait(false);
+                _stateLease.Revalidate();
                 return new PocMutationAuthorization(journal, Restore: true, trustedCurrent.RawLocalPolicySha256,
                     PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml, RevalidateScope);
             }
@@ -65,8 +67,23 @@ namespace Guard.WindowsPoc.Native
                 ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
             _fixtureLease.Revalidate(_decision);
 
+            await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token).ConfigureAwait(false);
+            _stateLease.Revalidate();
             return new PocMutationAuthorization(journal, Restore: false, trustedCurrent.RawLocalPolicySha256,
                 PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml, RevalidateScope);
+        }
+
+        internal async Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            CrossProcessPolicyGate.RequireHeld(_gateCapability);
+            _stateLease.Revalidate();
+            if (await _journalStore.ReadAsync(token).ConfigureAwait(false) != journal)
+            { throw new InvalidOperationException("Protected mutation authorization refused."); }
+            if (await _journalStore.ReadRecoveryBarrierAsync(token).ConfigureAwait(false) != PocRecoveryBarrier.ValidationComplete)
+            { throw new InvalidOperationException("Protected mutation authorization refused."); }
+            await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.Capture, token).ConfigureAwait(false);
+            _stateLease.Revalidate();
         }
 
         private void RevalidateScope()

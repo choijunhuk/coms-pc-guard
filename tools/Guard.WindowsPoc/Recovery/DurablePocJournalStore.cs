@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Safety;
 
@@ -21,6 +22,10 @@ namespace Guard.WindowsPoc.Recovery
             string OwnershipEvidence, string RecoveryLease, DateTimeOffset PreparedAtUtc, PocJournalPhase Phase);
         private sealed record Envelope(string PreviousHash, string Payload, string Hash);
         private sealed record LogRecord(Entry? Journal, bool? RecoveryBarrier, PocRecoveryBarrier? RecoveryBarrierKind, bool? HostRecoveryRequired);
+        private static readonly JsonSerializerOptions JournalJson = new()
+        {
+            Converters = { new PocRecoveryBarrierJsonConverter() }
+        };
 
         public async Task<bool> HasHostRecoveryRequiredAsync(CancellationToken token)
         {
@@ -81,7 +86,7 @@ namespace Guard.WindowsPoc.Recovery
                     Envelope envelope = JsonSerializer.Deserialize<Envelope>(line) ?? throw new InvalidOperationException("Invalid journal.");
                     if (envelope.PreviousHash != hash || envelope.Hash != PolicyMutationDecision.Hash(hash + envelope.Payload))
                     { throw new InvalidOperationException("Journal integrity failure."); }
-                    LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload) ?? throw new InvalidOperationException("Invalid journal.");
+                    LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload, JournalJson) ?? throw new InvalidOperationException("Invalid journal.");
                     hash = envelope.Hash;
                     if (record.Journal is null) { continue; }
                     Entry entry = record.Journal;
@@ -107,7 +112,7 @@ namespace Guard.WindowsPoc.Recovery
 
         private async Task AppendAsync(LogRecord record, string hash, CancellationToken token)
         {
-            string payload = JsonSerializer.Serialize(record);
+            string payload = JsonSerializer.Serialize(record, JournalJson);
             string nextHash = PolicyMutationDecision.Hash(hash + payload);
             byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Envelope(hash, payload, nextHash)) + "\n");
             if (_lease is not null) { await _lease.AppendAsync(bytes, token).ConfigureAwait(false); return; }
@@ -138,7 +143,7 @@ namespace Guard.WindowsPoc.Recovery
                     Envelope envelope = JsonSerializer.Deserialize<Envelope>(line) ?? throw new InvalidOperationException("Invalid journal.");
                     if (envelope.PreviousHash != hash || envelope.Hash != PolicyMutationDecision.Hash(hash + envelope.Payload))
                     { throw new InvalidOperationException("Journal integrity failure."); }
-                    LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload) ?? throw new InvalidOperationException("Invalid journal.");
+                    LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload, JournalJson) ?? throw new InvalidOperationException("Invalid journal.");
                     hash = envelope.Hash;
                     if (record.HostRecoveryRequired is true && record.Journal is null && record.RecoveryBarrier is null && record.RecoveryBarrierKind is null)
                     { hostRecoveryRequired = true; continue; }
@@ -158,6 +163,42 @@ namespace Guard.WindowsPoc.Recovery
             }
             catch (JsonException) { throw new InvalidOperationException("Invalid journal."); }
             return (journal, hash, recoveryBarrier, hostRecoveryRequired);
+        }
+
+        private sealed class PocRecoveryBarrierJsonConverter : JsonConverter<PocRecoveryBarrier>
+        {
+#pragma warning disable IDE0046, IDE0072
+            public override PocRecoveryBarrier Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+            {
+                return reader.TokenType switch
+                {
+                    JsonTokenType.String => ReadString(reader),
+                    JsonTokenType.Number when reader.TryGetInt32(out int value) => value switch
+                    {
+                        0 => PocRecoveryBarrier.None,
+                        1 => PocRecoveryBarrier.Capture,
+                        2 => PocRecoveryBarrier.Drift,
+                        3 => PocRecoveryBarrier.UnknownFailClosed,
+                        4 => PocRecoveryBarrier.ValidationComplete,
+                        _ => throw new JsonException("Invalid recovery barrier.")
+                    },
+                    _ => throw new JsonException("Invalid recovery barrier.")
+                };
+            }
+#pragma warning restore IDE0046, IDE0072
+
+            private static PocRecoveryBarrier ReadString(Utf8JsonReader reader)
+            {
+                return Enum.TryParse(reader.GetString(), ignoreCase: false, out PocRecoveryBarrier barrier)
+                    && Enum.IsDefined(barrier)
+                    ? barrier : throw new JsonException("Invalid recovery barrier.");
+            }
+
+            public override void Write(Utf8JsonWriter writer, PocRecoveryBarrier value, JsonSerializerOptions options)
+            {
+                if (!Enum.IsDefined(value)) { throw new JsonException("Invalid recovery barrier."); }
+                writer.WriteStringValue(value.ToString());
+            }
         }
     }
 }

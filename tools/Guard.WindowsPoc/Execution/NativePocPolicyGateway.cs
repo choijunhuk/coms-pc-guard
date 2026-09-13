@@ -25,6 +25,7 @@ namespace Guard.WindowsPoc.Execution
         {
             ArgumentNullException.ThrowIfNull(journal);
             if (_authority is null) { throw new InvalidOperationException("Protected mutation authorization is required."); }
+            await _authority.PrearmNativeRecheckAsync(journal, token).ConfigureAwait(false);
             AppLockerPolicySnapshot fresh = await CaptureAsync(token).ConfigureAwait(false);
             IPocMutationAuthorization authorization = await _authority.AuthorizeAsync(journal, restore, fresh, token).ConfigureAwait(false);
             WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);

@@ -15,34 +15,46 @@ namespace Guard.WindowsPoc.Recovery
         private sealed record Entry(AppLockerPolicySnapshot InitialBaseline, AppLockerPolicySnapshot Before, AppLockerPolicySnapshot After,
             string OwnershipEvidence, string RecoveryLease, DateTimeOffset PreparedAtUtc, PocJournalPhase Phase);
         private sealed record Envelope(string PreviousHash, string Payload, string Hash);
-        private sealed record LogRecord(Entry? Journal, bool? RecoveryBarrier);
+        private sealed record LogRecord(Entry? Journal, bool? RecoveryBarrier, bool? HostRecoveryRequired);
+
+        public async Task<bool> HasHostRecoveryRequiredAsync(CancellationToken token)
+        {
+            (_, _, _, bool required) = await ReadLogAsync(token).ConfigureAwait(false);
+            return required;
+        }
+
+        public async Task SetHostRecoveryRequiredAsync(CancellationToken token)
+        {
+            (_, string hash, _, _) = await ReadLogAsync(token).ConfigureAwait(false);
+            await AppendAsync(new(null, null, true), hash, token).ConfigureAwait(false);
+        }
 
         public async Task<bool> HasRecoveryBarrierAsync(CancellationToken token)
         {
-            (_, _, bool required) = await ReadLogAsync(token).ConfigureAwait(false);
+            (_, _, bool required, _) = await ReadLogAsync(token).ConfigureAwait(false);
             return required;
         }
 
         public async Task SetRecoveryBarrierAsync(bool required, CancellationToken token)
         {
-            (_, string hash, _) = await ReadLogAsync(token).ConfigureAwait(false);
-            await AppendAsync(new(null, required), hash, token).ConfigureAwait(false);
+            (_, string hash, _, _) = await ReadLogAsync(token).ConfigureAwait(false);
+            await AppendAsync(new(null, required, null), hash, token).ConfigureAwait(false);
         }
 
         public async Task<PocTransactionJournal?> ReadAsync(CancellationToken token)
         {
-            (PocTransactionJournal? journal, _, _) = await ReadLogAsync(token).ConfigureAwait(false);
+            (PocTransactionJournal? journal, _, _, _) = await ReadLogAsync(token).ConfigureAwait(false);
             return journal;
         }
 
         public async Task SaveAsync(PocTransactionJournal journal, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
-            (PocTransactionJournal? previous, string hash, _) = await ReadLogAsync(token).ConfigureAwait(false);
+            (PocTransactionJournal? previous, string hash, _, _) = await ReadLogAsync(token).ConfigureAwait(false);
             if (previous is not null && previous.InitialBaseline != journal.InitialBaseline)
             { throw new InvalidOperationException("Initial baseline cannot change."); }
             await AppendAsync(new(new(journal.InitialBaseline, journal.Before, journal.After,
-                journal.OwnershipEvidence, journal.RecoveryLease, journal.PreparedAtUtc, journal.Phase), null), hash, token).ConfigureAwait(false);
+                journal.OwnershipEvidence, journal.RecoveryLease, journal.PreparedAtUtc, journal.Phase), null, null), hash, token).ConfigureAwait(false);
         }
 
         private async Task AppendAsync(LogRecord record, string hash, CancellationToken token)
@@ -58,7 +70,7 @@ namespace Guard.WindowsPoc.Recovery
             file.Flush(flushToDisk: true);
         }
 
-        private async Task<(PocTransactionJournal? Journal, string Hash, bool RecoveryBarrier)> ReadLogAsync(CancellationToken token)
+        private async Task<(PocTransactionJournal? Journal, string Hash, bool RecoveryBarrier, bool HostRecoveryRequired)> ReadLogAsync(CancellationToken token)
         {
             _lease?.Revalidate();
             if (file.Length > MaximumBytes) { throw new InvalidOperationException("Journal size limit exceeded."); }
@@ -70,6 +82,7 @@ namespace Guard.WindowsPoc.Recovery
             PocTransactionJournal? journal = null;
             string hash = "";
             bool recoveryBarrier = false;
+            bool hostRecoveryRequired = false;
             try
             {
                 foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -79,10 +92,12 @@ namespace Guard.WindowsPoc.Recovery
                     { throw new InvalidOperationException("Journal integrity failure."); }
                     LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload) ?? throw new InvalidOperationException("Invalid journal.");
                     hash = envelope.Hash;
-                    if (record.RecoveryBarrier is bool required && record.Journal is null)
+                    if (record.HostRecoveryRequired is true && record.Journal is null && record.RecoveryBarrier is null)
+                    { hostRecoveryRequired = true; continue; }
+                    if (record.RecoveryBarrier is bool required && record.Journal is null && record.HostRecoveryRequired is null)
                     { recoveryBarrier = required; continue; }
                     Entry entry = record.Journal ?? throw new InvalidOperationException("Invalid journal.");
-                    if (record.RecoveryBarrier is not null) { throw new InvalidOperationException("Invalid journal."); }
+                    if (record.RecoveryBarrier is not null || record.HostRecoveryRequired is not null) { throw new InvalidOperationException("Invalid journal."); }
                     if (!Enum.IsDefined(entry.Phase) || (journal is not null && journal.InitialBaseline != entry.InitialBaseline))
                     { throw new InvalidOperationException("Invalid journal transition."); }
                     journal = PocTransactionJournal.Prepare(entry.InitialBaseline, entry.Before, entry.After, entry.OwnershipEvidence,
@@ -90,7 +105,7 @@ namespace Guard.WindowsPoc.Recovery
                 }
             }
             catch (JsonException) { throw new InvalidOperationException("Invalid journal."); }
-            return (journal, hash, recoveryBarrier);
+            return (journal, hash, recoveryBarrier, hostRecoveryRequired);
         }
     }
 }

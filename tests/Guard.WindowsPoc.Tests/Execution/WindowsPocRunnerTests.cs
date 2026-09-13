@@ -135,6 +135,23 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public async Task NativeScriptDriftLatchSurvivesHostMarkerSaveFailureAndRestart()
+        {
+            ScriptedGateway gateway = new() { DriftDuringRestore = true, Current = First };
+            MemoryJournal store = new()
+            {
+                FailHostRecovery = true,
+                Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.Mutated)
+            };
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.IsTrue(store.HostRecoveryLatch);
+            Assert.AreEqual(PocJournalPhase.WritePending, store.Value.Phase);
+            gateway.Current = Empty;
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(1, gateway.RestoreWrites);
+        }
+
+        [TestMethod]
         public async Task ExistingUnrecoverableJournalDominatesRefusalToStartAnotherRun()
         {
             ScriptedGateway gateway = new() { Current = First, FailRestore = true };
@@ -225,6 +242,16 @@ namespace Guard.WindowsPoc.Tests.Execution
                 return inner.ReadAsync(token);
             }
 
+            public Task<bool> HasHostRecoveryRequiredAsync(CancellationToken token)
+            {
+                return inner.HasHostRecoveryRequiredAsync(token);
+            }
+
+            public Task SetHostRecoveryRequiredAsync(CancellationToken token)
+            {
+                return inner.SetHostRecoveryRequiredAsync(token);
+            }
+
             public Task<bool> HasRecoveryBarrierAsync(CancellationToken token)
             {
                 return inner.HasRecoveryBarrierAsync(token);
@@ -274,6 +301,18 @@ namespace Guard.WindowsPoc.Tests.Execution
             public bool FailHostRecovery { get; set; }
             public bool FailBarrierWrites { get; set; }
             public bool RecoveryBarrier { get; set; }
+            public bool HostRecoveryLatch { get; set; }
+            public Task<bool> HasHostRecoveryRequiredAsync(CancellationToken token)
+            {
+                return Task.FromResult(HostRecoveryLatch);
+            }
+
+            public Task SetHostRecoveryRequiredAsync(CancellationToken token)
+            {
+                HostRecoveryLatch = true;
+                return Task.CompletedTask;
+            }
+
             public Task<bool> HasRecoveryBarrierAsync(CancellationToken token)
             {
                 return Task.FromResult(RecoveryBarrier);

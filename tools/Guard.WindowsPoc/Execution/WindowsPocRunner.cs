@@ -33,7 +33,8 @@ namespace Guard.WindowsPoc.Execution
             bool drift = false;
             try
             {
-                if (_hostRecoveryRequired || await store.HasRecoveryBarrierAsync(token).ConfigureAwait(false))
+                if (_hostRecoveryRequired || await store.HasHostRecoveryRequiredAsync(token).ConfigureAwait(false)
+                    || await store.HasRecoveryBarrierAsync(token).ConfigureAwait(false))
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 if (await store.ReadAsync(token).ConfigureAwait(false) is not null)
                 { throw new InvalidOperationException("Existing journal must be recovered before a new run."); }
@@ -85,7 +86,8 @@ namespace Guard.WindowsPoc.Execution
             using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(30));
             try
             {
-                if (_hostRecoveryRequired || await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false))
+                if (_hostRecoveryRequired || await store.HasHostRecoveryRequiredAsync(cleanup.Token).ConfigureAwait(false)
+                    || await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false))
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 PocTransactionJournal? journal = await store.ReadAsync(cleanup.Token).ConfigureAwait(false);
                 if (journal is null) { return PocRunResult.Success; }
@@ -130,6 +132,7 @@ namespace Guard.WindowsPoc.Execution
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
             try
             {
+                await store.SetHostRecoveryRequiredAsync(timeout.Token).ConfigureAwait(false);
                 PocTransactionJournal? journal = await store.ReadAsync(timeout.Token).ConfigureAwait(false);
                 if (journal is not null)
                 { await store.SaveAsync(journal.WithPhase(PocJournalPhase.HostCloneRecoveryRequired), timeout.Token).ConfigureAwait(false); }

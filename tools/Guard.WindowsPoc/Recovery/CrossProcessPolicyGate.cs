@@ -24,8 +24,10 @@ namespace Guard.WindowsPoc.Recovery
         internal const string Name = @"Global\ComsPcGuard.WindowsPoc.PolicyGate";
         // READ_CONTROL is necessary to validate the opened object, in addition to wait/release.
         private const int RequiredRights = 0x120001;
+        private static readonly AsyncLocal<string?> HeldOwnerSid = new();
         private readonly Func<IPolicyMutex> _open;
         private readonly TimeSpan _timeout;
+        private readonly string? _heldOwnerSid;
 
         internal CrossProcessPolicyGate(string ownerSid)
         {
@@ -39,12 +41,23 @@ namespace Guard.WindowsPoc.Recovery
             _ = capability.RevalidateNativePrincipal();
             _timeout = TimeSpan.FromSeconds(30);
             _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(capability) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
+            _heldOwnerSid = capability.OwnerSid;
         }
         internal CrossProcessPolicyGate(Func<IPolicyMutex> open, TimeSpan timeout)
+            : this(open, timeout, null) { }
+        internal CrossProcessPolicyGate(Func<IPolicyMutex> open, TimeSpan timeout, string? heldOwnerSid)
         {
             ArgumentNullException.ThrowIfNull(open);
             if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMinutes(5)) { throw new ArgumentOutOfRangeException(nameof(timeout)); }
-            _open = open; _timeout = timeout;
+            if (heldOwnerSid is not null) { ValidateOwner(heldOwnerSid); }
+            _open = open; _timeout = timeout; _heldOwnerSid = heldOwnerSid;
+        }
+        internal static void RequireHeld(OwnerTokenPolicyGateCapability capability)
+        {
+            ArgumentNullException.ThrowIfNull(capability);
+            OwnerTokenNativePrincipal principal = capability.RevalidateNativePrincipal();
+            if (HeldOwnerSid.Value != principal.OwnerSid)
+            { throw new InvalidOperationException("Protected policy gate is not held."); }
         }
         internal static void ValidateOwner(string ownerSid)
         {
@@ -129,7 +142,11 @@ namespace Guard.WindowsPoc.Recovery
                         cancellationToken.ThrowIfCancellationRequested();
                         mutex.Validate();
                         // Block this dedicated OS thread through lease/reload/action/acknowledgement.
-                        T result = action().GetAwaiter().GetResult();
+                        string? previous = HeldOwnerSid.Value;
+                        if (_heldOwnerSid is not null) { HeldOwnerSid.Value = _heldOwnerSid; }
+                        T result;
+                        try { result = action().GetAwaiter().GetResult(); }
+                        finally { HeldOwnerSid.Value = previous; }
                         acquired = false; mutex.Release();
                         _ = completion.TrySetResult(result);
                     }

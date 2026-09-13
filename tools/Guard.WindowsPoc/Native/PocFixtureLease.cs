@@ -163,18 +163,8 @@ namespace Guard.WindowsPoc.Native
             public PocFixturePublisherEvidence ReadPublisher(FileStream target)
             {
                 if (!OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException("Authenticode fixture evidence is Windows-only."); }
-                using Process process = Process.Start(CreateStartInfo(target.Name)) ?? throw new InvalidOperationException("Authenticode verifier could not start.");
-                Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
-                Task<string> errorTask = process.StandardError.ReadToEndAsync();
-                if (!process.WaitForExit(TimeSpan.FromSeconds(10)))
-                {
-                    process.Kill(entireProcessTree: true);
-                    throw new InvalidOperationException("Authenticode fixture evidence timed out.");
-                }
-                string output = outputTask.GetAwaiter().GetResult();
-                string error = errorTask.GetAwaiter().GetResult();
-                if (output.Length > 16_384 || error.Length > 16_384) { throw new InvalidOperationException("Authenticode fixture evidence unavailable."); }
-                if (process.ExitCode != 0) { throw new InvalidOperationException("Authenticode fixture evidence unavailable: " + error.Trim()); }
+                (string output, string error, int exitCode) = ExecuteBounded(CreateStartInfo(target.Name), TimeSpan.FromSeconds(10), 16_384);
+                if (exitCode != 0) { throw new InvalidOperationException("Authenticode fixture evidence unavailable: " + error.Trim()); }
                 PublisherRecord record = JsonSerializer.Deserialize<PublisherRecord>(output) ?? throw new InvalidOperationException("Authenticode fixture evidence unavailable.");
                 return new(record.Publisher ?? "", record.Product ?? "", record.Binary ?? Path.GetFileName(target.Name),
                     ParseVersion(record.LowVersion), ParseVersion(record.HighVersion));
@@ -202,6 +192,49 @@ namespace Guard.WindowsPoc.Native
                     info.ArgumentList.Add(argument);
                 }
                 return info;
+            }
+
+            internal static (string Output, string Error, int ExitCode) ExecuteBounded(ProcessStartInfo info, TimeSpan timeout, int maxChars)
+            {
+                using CancellationTokenSource deadline = new(timeout);
+                using Process process = Process.Start(info) ?? throw new InvalidOperationException("Authenticode verifier could not start.");
+                Task<string> outputTask = ReadBoundedAsync(process.StandardOutput, maxChars, deadline.Token);
+                Task<string> errorTask = ReadBoundedAsync(process.StandardError, maxChars, deadline.Token);
+                Task exitTask = process.WaitForExitAsync(deadline.Token);
+                try
+                {
+                    Task.WhenAll(exitTask, outputTask, errorTask).GetAwaiter().GetResult();
+                    return (outputTask.GetAwaiter().GetResult(), errorTask.GetAwaiter().GetResult(), process.ExitCode);
+                }
+                catch (Exception exception) when (exception is OperationCanceledException or InvalidOperationException)
+                {
+                    KillAndWait(process);
+                    throw new InvalidOperationException("Authenticode fixture evidence unavailable.", exception);
+                }
+            }
+
+            private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars, CancellationToken token)
+            {
+                char[] buffer = new char[512];
+                StringBuilder builder = new();
+                while (true)
+                {
+                    int read = await reader.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false);
+                    if (read == 0) { return builder.ToString(); }
+                    if (builder.Length + read > maxChars) { throw new InvalidOperationException("Authenticode fixture evidence exceeded output limit."); }
+                    _ = builder.Append(buffer, 0, read);
+                }
+            }
+
+            private static void KillAndWait(Process process)
+            {
+                try
+                {
+                    if (!process.HasExited) { process.Kill(entireProcessTree: true); }
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException) { }
+                if (!process.WaitForExit(milliseconds: 2_000))
+                { throw new InvalidOperationException("Authenticode verifier cleanup timed out."); }
             }
 
             private static Version ParseVersion(string? value)
@@ -241,6 +274,11 @@ namespace Guard.WindowsPoc.Native
             internal static ProcessStartInfo CreateAuthenticodeStartInfoForTest(string targetPath)
             {
                 return WindowsAuthenticodeFixturePublisherVerifier.CreateStartInfo(targetPath);
+            }
+
+            internal static (string Output, string Error, int ExitCode) ExecuteAuthenticodeProcessForTest(ProcessStartInfo info, TimeSpan timeout, int maxChars)
+            {
+                return WindowsAuthenticodeFixturePublisherVerifier.ExecuteBounded(info, timeout, maxChars);
             }
 
             private sealed class DelegatePublisherVerifier(PocFixturePublisherEvidence expectedPublisher) : IPocFixturePublisherVerifier

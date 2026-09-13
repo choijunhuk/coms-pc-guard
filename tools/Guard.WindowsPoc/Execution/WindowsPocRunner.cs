@@ -96,7 +96,7 @@ namespace Guard.WindowsPoc.Execution
                     if (recoveryBarrier != PocRecoveryBarrier.None) { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                     return PocRunResult.Success;
                 }
-                if (recoveryBarrier is PocRecoveryBarrier.Drift or PocRecoveryBarrier.UnknownFailClosed or PocRecoveryBarrier.Capture)
+                if (recoveryBarrier is PocRecoveryBarrier.Drift or PocRecoveryBarrier.UnknownFailClosed or PocRecoveryBarrier.Capture or PocRecoveryBarrier.NativeWriteInFlight)
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 if (recoveryBarrier == PocRecoveryBarrier.ValidationComplete && journal.Phase == PocJournalPhase.Prepared
                     && journal.Before.SamePolicy(journal.InitialBaseline))

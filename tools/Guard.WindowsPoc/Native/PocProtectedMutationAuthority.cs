@@ -86,6 +86,27 @@ namespace Guard.WindowsPoc.Native
             _stateLease.Revalidate();
         }
 
+        internal Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token)
+        {
+            return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.NativeWriteInFlight, token);
+        }
+
+        internal Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token)
+        {
+            return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.ValidationComplete, token);
+        }
+
+        private async Task SetNativeWriteBarrierAsync(PocTransactionJournal journal, PocRecoveryBarrier barrier, CancellationToken token)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            CrossProcessPolicyGate.RequireHeld(_gateCapability);
+            _stateLease.Revalidate();
+            if (await _journalStore.ReadAsync(token).ConfigureAwait(false) != journal)
+            { throw new InvalidOperationException("Protected mutation authorization refused."); }
+            await _journalStore.SetRecoveryBarrierAsync(barrier, token).ConfigureAwait(false);
+            _stateLease.Revalidate();
+        }
+
         private void RevalidateScope()
         {
             CrossProcessPolicyGate.RequireHeld(_gateCapability);

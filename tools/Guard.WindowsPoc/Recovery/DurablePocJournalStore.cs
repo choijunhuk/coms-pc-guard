@@ -179,7 +179,7 @@ namespace Guard.WindowsPoc.Recovery
                         1 => PocRecoveryBarrier.Capture,
                         2 => PocRecoveryBarrier.Drift,
                         3 => PocRecoveryBarrier.UnknownFailClosed,
-                        4 => PocRecoveryBarrier.ValidationComplete,
+                        4 => PocRecoveryBarrier.UnknownFailClosed,
                         _ => throw new JsonException("Invalid recovery barrier.")
                     },
                     _ => throw new JsonException("Invalid recovery barrier.")

@@ -124,6 +124,37 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public async Task NativeGatewayLeavesWriteInFlightBarrierWhenMutationScriptReportsDrift()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
+                .WithPhase(PocJournalPhase.WritePending);
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                WindowsPocStateLease lease = WindowsPocStateLease.Open(Owner,
+                    () => [new(false, Owner, true, false)],
+                    () => new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 1), Evidence);
+                using DurablePocJournalStore store = new(lease);
+                await store.SaveAsync(journal.WithPhase(PocJournalPhase.Prepared), CancellationToken.None);
+                await store.SaveAsync(journal, CancellationToken.None);
+                await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, CancellationToken.None);
+                OwnerTokenPolicyGateCapability capability = CapabilityForTest();
+                DriftOnMutationRunner runner = new();
+                NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, capability: capability));
+                CrossProcessPolicyGate gate = new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
+                typeof(CrossProcessPolicyGate).GetField("_heldCapability", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(gate, capability);
+                _ = await gate.RunAsync<object?>(async () =>
+                {
+                    _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
+                    return null;
+                }, CancellationToken.None);
+                Assert.AreEqual(PocRecoveryBarrier.NativeWriteInFlight, await store.ReadRecoveryBarrierAsync(CancellationToken.None));
+            }
+            finally { File.Delete(path); }
+        }
+
+        [TestMethod]
         public async Task ProductionAuthorityRefusesOutsideHeldPolicyGate()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
@@ -426,6 +457,33 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public void AuthenticodeProcessReaderFailsClosedOnStdoutOverflowBeforeExit()
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            ProcessStartInfo info = ShellProcess("python3 - <<'PY'\nprint('x' * 20000)\nPY");
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromSeconds(5), maxChars: 1024));
+        }
+
+        [TestMethod]
+        public void AuthenticodeProcessReaderFailsClosedOnEndlessStderr()
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            ProcessStartInfo info = ShellProcess("while true; do printf x >&2; done");
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromSeconds(1), maxChars: 4096));
+        }
+
+        [TestMethod]
+        public void AuthenticodeProcessReaderFailsClosedWhenChildKeepsPipeOpenAfterParentExit()
+        {
+            if (OperatingSystem.IsWindows()) { return; }
+            ProcessStartInfo info = ShellProcess("(sleep 5; printf late)& printf parent");
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromMilliseconds(300), maxChars: 4096));
+        }
+
+        [TestMethod]
         public async Task ProductionAuthorityRejectsFixtureSwapBeforeRestore()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
@@ -469,6 +527,30 @@ namespace Guard.WindowsPoc.Tests.Execution
                 Requests.Add(request);
                 return Task.FromResult(new WindowsCommandResult(PowerShellCommandRunner.ParseSnapshot(captureJson)));
             }
+        }
+
+        private sealed class DriftOnMutationRunner : IWindowsCommandRunner
+        {
+            public Task<WindowsCommandResult> RunAsync(WindowsCommandRequest request, CancellationToken cancellationToken)
+            {
+                return request.Command == WindowsCommand.Capture
+                    ? Task.FromResult(new WindowsCommandResult(PowerShellCommandRunner.ParseSnapshot(CompleteFor(Empty.LocalPolicyXml))))
+                    : Task.FromException<WindowsCommandResult>(new PocPolicyDriftException());
+            }
+        }
+
+        private static ProcessStartInfo ShellProcess(string script)
+        {
+            ProcessStartInfo info = new("/bin/sh")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            info.ArgumentList.Add("-c");
+            info.ArgumentList.Add(script);
+            return info;
         }
 
         private static AppLockerPolicySnapshot Snapshot(string xml)

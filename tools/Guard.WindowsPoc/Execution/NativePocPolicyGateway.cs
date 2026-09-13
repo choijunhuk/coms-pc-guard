@@ -29,7 +29,9 @@ namespace Guard.WindowsPoc.Execution
             AppLockerPolicySnapshot fresh = await CaptureAsync(token).ConfigureAwait(false);
             IPocMutationAuthorization authorization = await _authority.AuthorizeAsync(journal, restore, fresh, token).ConfigureAwait(false);
             WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
+            await _authority.MarkNativeWriteInFlightAsync(journal, token).ConfigureAwait(false);
             _ = await _runner.RunAsync(request, token).ConfigureAwait(false);
+            await _authority.MarkNativeWriteVerifiedAsync(journal, token).ConfigureAwait(false);
         }
 
         public Task<bool> ProbeAsync(CancellationToken token)

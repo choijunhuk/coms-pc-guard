@@ -178,6 +178,7 @@ namespace Guard.WindowsPoc.Tests.Safety
             Assert.AreEqual(64, first.Length);
             Assert.AreNotEqual(first, second);
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ComputeVmIdentityHash(sharedVirtualBoxPlatform, "00000000-0000-0000-0000-000000000000"));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ComputeVmIdentityHash(sharedVirtualBoxPlatform, "ffffffff-ffff-ffff-ffff-ffffffffffff"));
         }
 
         [TestMethod]
@@ -187,13 +188,15 @@ namespace Guard.WindowsPoc.Tests.Safety
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.CaptureSystemUuid((_, _, _, _) => 100_000));
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid([]));
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid(BuildSmbiosTable(Guid.Empty)));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid(BuildSmbiosTable(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"))));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid(BuildSmbiosTable(Guid.Parse("11111111-2222-3333-4444-555555555555"), includeTerminator: false)));
         }
 
         [TestMethod]
         public void NativeSystemUuidProviderBindsSmbiosTypeOneUuid()
         {
             Guid uuid = Guid.Parse("11111111-2222-3333-4444-555555555555");
-            byte[] smbios = BuildSmbiosTable(uuid);
+            byte[] smbios = BuildSmbiosTable(uuid, includeTerminator: true);
 
             Assert.AreEqual(uuid.ToString("D"), OwnerTokenAttestation.ParseSmbiosSystemUuid(smbios));
             Assert.AreEqual(uuid.ToString("D"), OwnerTokenAttestation.CaptureSystemUuid((_, _, buffer, size) =>
@@ -277,12 +280,12 @@ namespace Guard.WindowsPoc.Tests.Safety
             };
         }
 
-        private static byte[] BuildSmbiosTable(Guid uuid)
+        private static byte[] BuildSmbiosTable(Guid uuid, bool includeTerminator = true)
         {
-            byte[] table = new byte[8 + 25 + 2];
+            byte[] table = new byte[8 + 25 + (includeTerminator ? 2 : 0)];
             table[1] = 3;
             table[2] = 6;
-            BitConverter.GetBytes(27).CopyTo(table, 4);
+            BitConverter.GetBytes(table.Length - 8).CopyTo(table, 4);
             int typeOne = 8;
             table[typeOne] = 1;
             table[typeOne + 1] = 25;

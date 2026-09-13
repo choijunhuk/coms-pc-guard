@@ -465,6 +465,7 @@ namespace Guard.WindowsPoc.Safety
                 if (type == 1)
                 {
                     if (length < 25) { throw Refused(); }
+                    _ = NextSmbiosStructureOffset(rawSmbiosData, offset + length, tableEnd);
                     byte[] uuidBytes = rawSmbiosData[(offset + 8)..(offset + 24)];
                     return NormalizeSystemUuid(new Guid(uuidBytes).ToString("D"));
                 }
@@ -497,7 +498,9 @@ namespace Guard.WindowsPoc.Safety
 
         private static string NormalizeSystemUuid(string systemUuid)
         {
-            return Guid.TryParse(systemUuid, out Guid uuid) && uuid != Guid.Empty ? uuid.ToString("D").ToLowerInvariant() : throw Refused();
+            return Guid.TryParse(systemUuid, out Guid uuid) && uuid != Guid.Empty && !uuid.ToByteArray().All(value => value == 0xff)
+                ? uuid.ToString("D").ToLowerInvariant()
+                : throw Refused();
         }
 
         [SupportedOSPlatform("windows")]

@@ -217,7 +217,7 @@ namespace Guard.WindowsPoc.Native
 
             internal static ProcessStartInfo CreateStartInfo(string targetPath)
             {
-                const string script = "Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $files=@(Get-AppLockerFileInformation -Path $path); if ($files.Count -ne 1 -or $null -eq $files[0].Publisher) { throw 'Publisher unavailable.' }; $pub=$files[0].Publisher; [pscustomobject]@{ Publisher=$pub.PublisherName; Product=$pub.ProductName; Binary=$pub.BinaryName; LowVersion=$pub.BinaryVersion.ToString(); HighVersion=$pub.BinaryVersion.ToString(); CertificateThumbprint=$sig.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress";
+                const string script = PowerShellUtf8Transport.Preamble + "Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $files=@(Get-AppLockerFileInformation -Path $path); if ($files.Count -ne 1 -or $null -eq $files[0].Publisher) { throw 'Publisher unavailable.' }; $pub=$files[0].Publisher; $record=[pscustomobject]@{ Publisher=$pub.PublisherName; Product=$pub.ProductName; Binary=$pub.BinaryName; LowVersion=$pub.BinaryVersion.ToString(); HighVersion=$pub.BinaryVersion.ToString(); CertificateThumbprint=$sig.SignerCertificate.Thumbprint }; [Console]::Out.WriteLine(($record | ConvertTo-Json -Compress))";
                 ProcessStartInfo info = new(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
                 {
                     UseShellExecute = false,
@@ -236,6 +236,7 @@ namespace Guard.WindowsPoc.Native
                 {
                     info.ArgumentList.Add(argument);
                 }
+                PowerShellUtf8Transport.Configure(info);
                 return info;
             }
 

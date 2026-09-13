@@ -10,6 +10,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+$OutputEncoding = [Console]::OutputEncoding
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'Stop'
 $VerbosePreference = 'SilentlyContinue'

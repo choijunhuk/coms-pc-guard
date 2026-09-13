@@ -5,6 +5,9 @@
 # https://learn.microsoft.com/windows/security/application-security/application-control/app-control-for-business/operations/citool-commands
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+$OutputEncoding = [Console]::OutputEncoding
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'Stop'
 $VerbosePreference = 'SilentlyContinue'

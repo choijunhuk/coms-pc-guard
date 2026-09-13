@@ -5,12 +5,36 @@ using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Recovery;
 using Guard.WindowsPoc.Safety;
+using Guard.WindowsPoc.Execution;
 
 namespace Guard.WindowsPoc.Tests.Native
 {
     [TestClass]
     public sealed class PowerShellCommandRunnerTests
     {
+        [TestMethod]
+        public void TrustedPowerShellStartInfosRequireStrictUtf8WithoutDecoderFallback()
+        {
+            System.Diagnostics.ProcessStartInfo[] starts = [PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Capture),
+                PocFixtureLease.CreateAuthenticodeStartInfo(@"C:\ComsPcGuardPoc\Fixtures\target.exe"),
+                PocNativeSessionProbe.CreateCollectStartInfo()];
+            foreach (System.Diagnostics.ProcessStartInfo info in starts)
+            {
+                Assert.IsNotNull(info.StandardOutputEncoding);
+                Assert.IsNotNull(info.StandardErrorEncoding);
+                Assert.AreEqual(65001, info.StandardOutputEncoding.CodePage);
+                Assert.AreEqual(65001, info.StandardErrorEncoding.CodePage);
+                _ = Assert.ThrowsExactly<System.Text.DecoderFallbackException>(() => info.StandardOutputEncoding.GetString([0xff]));
+                _ = Assert.ThrowsExactly<System.Text.DecoderFallbackException>(() => info.StandardErrorEncoding.GetString([0xff]));
+                if (info.RedirectStandardInput)
+                {
+                    Assert.IsNotNull(info.StandardInputEncoding);
+                    Assert.AreEqual(65001, info.StandardInputEncoding.CodePage);
+                    _ = Assert.ThrowsExactly<System.Text.EncoderFallbackException>(() => info.StandardInputEncoding.GetBytes("\ud800"));
+                }
+            }
+        }
+
         internal const string Complete = """
         {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"D000000000000000000000000000000000000000000000000000000000000001","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","RawLocalPolicySha256":"635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
         """;
@@ -113,19 +137,21 @@ namespace Guard.WindowsPoc.Tests.Native
                 $assignment = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$snapshot' }, $true)
                 if ($null -eq $assignment) { throw 'Snapshot unavailable' }
                 $snapshot = & ([scriptblock]::Create($assignment.Right.Extent.Text))
-                ConvertTo-Json -InputObject $snapshot -Depth 4 -Compress
+                [Console]::Out.WriteLine((ConvertTo-Json -InputObject $snapshot -Depth 4 -Compress))
                 """;
             System.Diagnostics.ProcessStartInfo info = new(powerShell)
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             info.Environment["POC_CAPTURE_SCRIPT"] = Path.Combine(root.FullName, "scripts", "windows", "Get-ComsPocInventory.ps1");
             info.Environment["POC_LOCAL_XML"] = xml;
-            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
+            PowerShellUtf8Transport.Configure(info);
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(PowerShellUtf8Transport.Preamble + command)) })
             { info.ArgumentList.Add(argument); }
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
             string json = OperatingSystem.IsWindows()
                 ? await PowerShellCommandRunner.ExecutePowerShellProcessAsync(info, timeout.Token)
                 : await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
             JsonObject output = JsonNode.Parse(json)!.AsObject();
+            Assert.AreEqual(xml, output["LocalPolicyXml"]?.GetValue<string>());
             Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
             Assert.IsTrue(PowerShellCommandRunner.ParseSnapshot(json).IsComplete);
         }
@@ -153,22 +179,26 @@ namespace Guard.WindowsPoc.Tests.Native
                 $first = Get-ComsPocInventoryRevision $localHash $effectiveHash 1 1 1 1 $true $true $true $true $true $true 26100 'Observed'
                 Start-Sleep -Milliseconds 10
                 $second = Get-ComsPocInventoryRevision $localHash $effectiveHash 1 1 1 1 $true $true $true $true $true $true 26100 'Observed'
-                [Console]::Out.WriteLine(($first + "`n" + $second))
+                [Console]::Out.Write(($first + "`r`n" + $second + "`r`n"))
                 """;
             System.Diagnostics.ProcessStartInfo info = new(powerShell)
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             info.Environment["POC_CAPTURE_SCRIPT"] = Path.Combine(root.FullName, "scripts", "windows", "Get-ComsPocInventory.ps1");
-            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
+            PowerShellUtf8Transport.Configure(info);
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(PowerShellUtf8Transport.Preamble + command)) })
             { info.ArgumentList.Add(argument); }
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
             string output = OperatingSystem.IsWindows()
                 ? await PowerShellCommandRunner.ExecutePowerShellProcessAsync(info, timeout.Token)
                 : await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token);
-            string[] revisions = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            string[] revisions = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             Assert.AreEqual(2, revisions.Length);
             Assert.AreEqual(revisions[0], revisions[1]);
-            Assert.AreEqual(64, revisions[0].Length);
-            Assert.IsTrue(revisions[0].All(char.IsAsciiHexDigit));
+            foreach (string revision in revisions)
+            {
+                Assert.AreEqual(64, revision.Length);
+                Assert.IsTrue(revision.All(char.IsAsciiHexDigit));
+            }
         }
 
         private static System.Diagnostics.ProcessStartInfo Shell(string command, params string[] arguments)

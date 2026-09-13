@@ -8,6 +8,9 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+$OutputEncoding = [Console]::OutputEncoding
 if ($env:OS -ne 'Windows_NT') { throw 'Probe refused.' }
 if ($PSCommandPath -cne 'C:\ProgramData\ComsPcGuardPoc\Scripts\Test-ComsPocFixture.ps1') { throw 'Fixed adapter path required.' }
 $root = 'C:\ComsPcGuardPoc\Fixtures'
@@ -56,4 +59,4 @@ try {
 }
 $result = [pscustomobject]@{ RunId = $id.ToString('D'); Control = $control; Target = $target; Events = @($events) } | ConvertTo-Json -Depth 5 -Compress
 if ($result.Length -gt 262144) { throw 'Probe evidence exceeded bound.' }
-$result
+[Console]::Out.WriteLine($result)

@@ -57,13 +57,16 @@ namespace Guard.WindowsPoc.Native
             bool powerShell, bool mutation, int maximumOutputCharacters, CancellationToken cancellationToken)
         {
             if (maximumOutputCharacters is <= 0 or > 2_000_000) { throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters)); }
+            if (powerShell) { PowerShellUtf8Transport.Configure(info); }
             using Process process = new() { StartInfo = info };
             cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) { throw new InvalidOperationException("Native inventory unavailable."); }
             try
             {
-                Task<string> stdout = ReadBoundedAsync(process.StandardOutput, cancellationToken, maximumOutputCharacters);
-                Task<string> stderr = ReadBoundedAsync(process.StandardError, cancellationToken, powerShell ? PowerShellStartupProgress.MaximumCharacters : 2_000_000);
+                using StreamReader? utf8Output = powerShell ? PowerShellUtf8Transport.OpenReader(process.StandardOutput.BaseStream) : null;
+                using StreamReader? utf8Error = powerShell ? PowerShellUtf8Transport.OpenReader(process.StandardError.BaseStream) : null;
+                Task<string> stdout = ReadBoundedAsync(utf8Output ?? process.StandardOutput, cancellationToken, maximumOutputCharacters);
+                Task<string> stderr = ReadBoundedAsync(utf8Error ?? process.StandardError, cancellationToken, powerShell ? PowerShellStartupProgress.MaximumCharacters : 2_000_000);
                 if (info.RedirectStandardInput)
                 {
                     if (input is not null) { await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false); }
@@ -211,6 +214,7 @@ namespace Guard.WindowsPoc.Native
                 info.ArgumentList.Add("-ExpectedCurrentSha256"); info.ArgumentList.Add(expectedCurrentSha256!);
                 info.ArgumentList.Add("-ExpectedPayloadSha256"); info.ArgumentList.Add(expectedPayloadSha256!);
             }
+            PowerShellUtf8Transport.Configure(info);
             return info;
         }
 

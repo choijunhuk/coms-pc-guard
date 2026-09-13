@@ -83,6 +83,7 @@ namespace Guard.WindowsPoc.Execution
             info.Environment["PSModulePath"] = @"C:\Windows\System32\WindowsPowerShell\v1.0\Modules";
             foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WindowsScriptTrustVerifier.ProbeScriptPath, "-Collect" })
             { info.ArgumentList.Add(argument); }
+            PowerShellUtf8Transport.Configure(info);
             return info;
         }
 

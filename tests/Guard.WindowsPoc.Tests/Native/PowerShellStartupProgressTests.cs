@@ -40,7 +40,7 @@ namespace Guard.WindowsPoc.Tests.Native
                 info.Environment["POC_TEST_STDERR"] = stderr;
                 info.Environment["POC_TEST_EXIT"] = exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 const string command = "[Console]::Error.Write($env:POC_TEST_STDERR); [Console]::Out.Write('{}'); exit ([int]$env:POC_TEST_EXIT)";
-                foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) }) { info.ArgumentList.Add(argument); }
+                foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(PowerShellUtf8Transport.Preamble + command)) }) { info.ArgumentList.Add(argument); }
                 using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
                 if (accepted)
                 {

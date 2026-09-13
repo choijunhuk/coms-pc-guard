@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using System.Reflection;
+using System.Security.Cryptography;
 using Guard.WindowsPoc.Inventory;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Recovery;
@@ -345,6 +347,60 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task IssuedAuthorizationWithoutNativeWriteInFlightCannotReachPayloadOrDispatch()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            IPocMutationAuthorization authorization = IssuedAuthorizationWithoutDispatchBarrier(journal, restore: false);
+            PowerShellCommandRunner runner = new(new Trust(), (_, _) =>
+                throw new AssertFailedException("Authorization without NativeWriteInFlight reached native dispatch"));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+        }
+
+        [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public async Task IssuedAuthorizationCannotDispatchApplyOrRestoreWhenJournalBarrierIsNotNativeWriteInFlight(bool restore)
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            await WithJournalStoreAsync(journal, PocRecoveryBarrier.ValidationComplete, async store =>
+            {
+                IPocMutationAuthorization authorization = IssuedAuthorizationWithoutDispatchBarrier(journal, restore, store);
+                PowerShellCommandRunner runner = new(new Trust(), (_, _) =>
+                    throw new AssertFailedException("Authorization without NativeWriteInFlight reached native dispatch"));
+                WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(request, CancellationToken.None));
+            });
+        }
+
+        [TestMethod]
+        public async Task IssuedAuthorizationCannotReplayAfterDispatchBarrierClears()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            await WithJournalStoreAsync(journal, PocRecoveryBarrier.NativeWriteInFlight, async store =>
+            {
+                IPocMutationAuthorization authorization = IssuedAuthorizationWithoutDispatchBarrier(journal, restore: false, store);
+                await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, CancellationToken.None);
+                PowerShellCommandRunner runner = new(new Trust(), (_, _) =>
+                    throw new AssertFailedException("Replayed authorization reached native dispatch"));
+                _ = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+            });
+        }
+
+        [TestMethod]
         public async Task PayloadLeaseMismatchDisposesAndDeletesStagedFile()
         {
             string directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -542,6 +598,49 @@ namespace Guard.WindowsPoc.Tests.Native
             {
                 RevalidateAction?.Invoke();
             }
+        }
+
+        private static async Task WithJournalStoreAsync(PocTransactionJournal journal, PocRecoveryBarrier barrier,
+            Func<DurablePocJournalStore, Task> action)
+        {
+            const string owner = "S-1-5-21-1-2-3-1001";
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                using WindowsPocStateLease lease = WindowsPocStateLease.Open(owner,
+                    () => [new(false, owner, true, false)],
+                    () => new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 1), Evidence);
+                using DurablePocJournalStore store = new(lease);
+                await store.SaveAsync(journal, CancellationToken.None);
+                await store.SetRecoveryBarrierAsync(barrier, CancellationToken.None);
+                await action(store);
+            }
+            finally { File.Delete(path); }
+        }
+
+        private static StateFileEvidence Evidence(FileStream file)
+        {
+            file.Position = 0;
+            return new(Convert.ToHexString(SHA256.HashData(file)), file.Length, File.GetLastWriteTimeUtc(file.SafeFileHandle));
+        }
+
+        private static IPocMutationAuthorization IssuedAuthorizationWithoutDispatchBarrier(PocTransactionJournal journal, bool restore,
+            DurablePocJournalStore? store = null)
+        {
+            Type type = typeof(PocProtectedMutationAuthority).GetNestedType("PocMutationAuthorization", BindingFlags.NonPublic)
+                ?? throw new AssertFailedException("Expected issued authorization type.");
+            ConstructorInfo constructor = type.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                .Single(candidate => candidate.GetParameters().Length == 7);
+            object instance = constructor.Invoke([
+                journal,
+                restore,
+                (restore ? journal.After : journal.Before).RawLocalPolicySha256,
+                restore ? journal.InitialBaseline.LocalHash : journal.After.LocalHash,
+                restore ? journal.InitialBaseline.LocalPolicyXml : journal.After.LocalPolicyXml,
+                store,
+                static () => { }
+            ]);
+            return (IPocMutationAuthorization)instance;
         }
     }
 }

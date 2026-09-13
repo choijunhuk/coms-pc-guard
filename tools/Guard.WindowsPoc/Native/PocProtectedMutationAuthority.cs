@@ -65,10 +65,10 @@ namespace Guard.WindowsPoc.Native
                 _ = journal.Recognizes(trustedCurrent) && !trustedCurrent.SamePolicy(journal.InitialBaseline)
                     ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
                 _fixtureLease.Revalidate(_decision);
-                await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token).ConfigureAwait(false);
+                await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.NativeWriteInFlight, token).ConfigureAwait(false);
                 _stateLease.Revalidate();
                 return new PocMutationAuthorization(journal, Restore: true, trustedCurrent.RawLocalPolicySha256,
-                    PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml, RevalidateScope);
+                    PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml, _journalStore, RevalidateScope);
             }
 
             _ = trustedCurrent.SamePolicy(journal.Before) && _decision.Allowed
@@ -76,10 +76,10 @@ namespace Guard.WindowsPoc.Native
                 ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
             _fixtureLease.Revalidate(_decision);
 
-            await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token).ConfigureAwait(false);
+            await _journalStore.SetRecoveryBarrierAsync(PocRecoveryBarrier.NativeWriteInFlight, token).ConfigureAwait(false);
             _stateLease.Revalidate();
             return new PocMutationAuthorization(journal, Restore: false, trustedCurrent.RawLocalPolicySha256,
-                PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml, RevalidateScope);
+                PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml, _journalStore, RevalidateScope);
         }
 
         public async Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
@@ -105,11 +105,11 @@ namespace Guard.WindowsPoc.Native
             return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.ValidationComplete, token);
         }
 
-        internal static void RevalidateIssuedAuthorization(IPocMutationAuthorization authorization)
+        internal static async Task RevalidateIssuedAuthorizationAsync(IPocMutationAuthorization authorization, CancellationToken token)
         {
             if (authorization is not PocMutationAuthorization issued)
             { throw new InvalidOperationException("Protected mutation authorization refused."); }
-            issued.Revalidate();
+            await issued.RevalidateDispatchStateAsync(token).ConfigureAwait(false);
         }
 
         private async Task SetNativeWriteBarrierAsync(PocTransactionJournal journal, PocRecoveryBarrier barrier, CancellationToken token)
@@ -131,10 +131,21 @@ namespace Guard.WindowsPoc.Native
         }
 
         private sealed record PocMutationAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
-            string ExpectedPayloadSha256, string PayloadXml, Action RevalidateAction) : IPocMutationAuthorization
+            string ExpectedPayloadSha256, string PayloadXml, DurablePocJournalStore? JournalStore, Action RevalidateAction) : IPocMutationAuthorization
         {
             public void Revalidate()
             {
+                RevalidateAction();
+            }
+
+            internal async Task RevalidateDispatchStateAsync(CancellationToken token)
+            {
+                RevalidateAction();
+                if (JournalStore is null
+                    || await JournalStore.ReadAsync(token).ConfigureAwait(false) != Journal
+                    || await JournalStore.HasHostRecoveryRequiredAsync(token).ConfigureAwait(false)
+                    || await JournalStore.ReadRecoveryBarrierAsync(token).ConfigureAwait(false) != PocRecoveryBarrier.NativeWriteInFlight)
+                { throw new InvalidOperationException("Protected mutation authorization refused."); }
                 RevalidateAction();
             }
         }

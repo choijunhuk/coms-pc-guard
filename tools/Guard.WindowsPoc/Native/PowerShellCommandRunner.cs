@@ -235,7 +235,7 @@ namespace Guard.WindowsPoc.Native
                 {
                     throw new InvalidOperationException("Protected mutation authorization does not match command.");
                 }
-                PocProtectedMutationAuthority.RevalidateIssuedAuthorization(authorization);
+                await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, cancellationToken).ConfigureAwait(false);
 
                 using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(_timeout);
@@ -245,18 +245,18 @@ namespace Guard.WindowsPoc.Native
                 FileStream? payloadLease = null;
                 try
                 {
-                    PocProtectedMutationAuthority.RevalidateIssuedAuthorization(authorization);
+                    await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, timeout.Token).ConfigureAwait(false);
                     payloadLease = await WritePayloadIfNativeAsync(payloadPath, authorization.PayloadXml, authorization.ExpectedPayloadSha256, timeout.Token).ConfigureAwait(false);
                     ProcessStartInfo info = CreateStartInfo(request.Command, payloadPath, authorization.ExpectedCurrentSha256, authorization.ExpectedPayloadSha256);
                     timeout.Token.ThrowIfCancellationRequested();
-                    PocProtectedMutationAuthority.RevalidateIssuedAuthorization(authorization);
+                    await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, timeout.Token).ConfigureAwait(false);
                     lease.Revalidate();
                     if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
                     string json = await _executeMutation(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
-                    PocProtectedMutationAuthority.RevalidateIssuedAuthorization(authorization);
+                    await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, timeout.Token).ConfigureAwait(false);
                     ValidateMutationResult(json, authorization.Restore);
                     if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
-                    PocProtectedMutationAuthority.RevalidateIssuedAuthorization(authorization);
+                    await PocProtectedMutationAuthority.RevalidateIssuedAuthorizationAsync(authorization, timeout.Token).ConfigureAwait(false);
                     return new(null);
                 }
                 finally

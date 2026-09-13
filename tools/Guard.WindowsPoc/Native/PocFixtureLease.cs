@@ -7,27 +7,40 @@ namespace Guard.WindowsPoc.Native
     internal sealed record PocFixtureLeaseEvidence(string TargetPath, string TargetSha256, string ControlPath, string ControlSha256,
         PocFixturePublisherEvidence Publisher, string InventoryRevision);
 
-    internal sealed class PocFixtureLease
+    internal sealed class PocFixtureLease : IDisposable
     {
         private readonly Stream _target;
         private readonly Stream _control;
         private readonly Func<PocFixturePublisherEvidence> _readPublisher;
         private readonly PocFixtureLeaseEvidence _expected;
 
+        private bool _disposed;
+
         internal PocFixtureLease(Stream target, Stream control, PocFixtureLeaseEvidence expected, Func<PocFixturePublisherEvidence>? readPublisher = null)
         {
             _target = target ?? throw new ArgumentNullException(nameof(target));
             _control = control ?? throw new ArgumentNullException(nameof(control));
             _expected = expected ?? throw new ArgumentNullException(nameof(expected));
-            _readPublisher = readPublisher ?? throw new InvalidOperationException("Protected fixture publisher verifier is required.");
-            if (_target is not FileStream || _control is not FileStream || !_target.CanRead || !_target.CanSeek || !_control.CanRead || !_control.CanSeek)
-            { throw new InvalidOperationException("Protected fixture handles must remain retained and seekable."); }
-            RevalidateHashes(expected.TargetSha256, expected.ControlSha256);
+            try
+            {
+                _readPublisher = readPublisher ?? throw new InvalidOperationException("Protected fixture publisher verifier is required.");
+                if (_target is not FileStream targetFile || _control is not FileStream controlFile || !_target.CanRead || _target.CanWrite || !_target.CanSeek
+                    || !_control.CanRead || _control.CanWrite || !_control.CanSeek
+                    || !SamePath(targetFile.Name, expected.TargetPath) || !SamePath(controlFile.Name, expected.ControlPath))
+                { throw new InvalidOperationException("Protected fixture handles must remain retained and path-bound."); }
+                RevalidateHashes(expected.TargetSha256, expected.ControlSha256);
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
         }
 
         internal void Revalidate(PolicyMutationDecision decision)
         {
             ArgumentNullException.ThrowIfNull(decision);
+            ObjectDisposedException.ThrowIf(_disposed, this);
             PocFixturePublisherEvidence publisher = _readPublisher();
             RevalidateHashes(_expected.TargetSha256, _expected.ControlSha256);
             _ = _expected.TargetPath == decision.FixturePath
@@ -52,6 +65,20 @@ namespace Guard.WindowsPoc.Native
             string hash = Convert.ToHexString(SHA256.HashData(stream));
             stream.Position = 0;
             return hash;
+        }
+
+        private static bool SamePath(string actual, string expected)
+        {
+            StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(Path.GetFullPath(actual), Path.GetFullPath(expected), comparison);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) { return; }
+            _disposed = true;
+            _target.Dispose();
+            _control.Dispose();
         }
     }
 }

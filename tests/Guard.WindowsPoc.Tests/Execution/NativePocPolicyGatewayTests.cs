@@ -249,6 +249,33 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public void FixtureLeaseRejectsUnrelatedFileStreamPathAndDisposesHandles()
+        {
+            string targetPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-target.exe");
+            string controlPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-control.exe");
+            FileStream target = TempFixtureStream(targetPath, FixtureBytes);
+            FileStream control = TempFixtureStream(controlPath, ControlBytes);
+            PocFixtureLeaseEvidence evidence = FixtureEvidence(
+                Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-other-target.exe"), controlPath);
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => new PocFixtureLease(target, control, evidence, () => evidence.Publisher));
+            Assert.IsFalse(target.CanRead);
+            Assert.IsFalse(control.CanRead);
+        }
+
+        [TestMethod]
+        public void FixtureLeaseRejectsWritableReplacementHandle()
+        {
+            string targetPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-target.exe");
+            string controlPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-control.exe");
+            File.WriteAllBytes(targetPath, FixtureBytes);
+            File.WriteAllBytes(controlPath, ControlBytes);
+            using FileStream target = new(targetPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 4096, FileOptions.DeleteOnClose);
+            using FileStream control = new(controlPath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.DeleteOnClose);
+            PocFixtureLeaseEvidence evidence = FixtureEvidence(targetPath, controlPath);
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => new PocFixtureLease(target, control, evidence, () => evidence.Publisher));
+        }
+
+        [TestMethod]
         public async Task ProductionAuthorityRejectsFixtureSwapBeforeRestore()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
@@ -338,9 +365,10 @@ namespace Guard.WindowsPoc.Tests.Execution
         private static PocProtectedMutationAuthority Authority(WindowsPocStateLease lease, DurablePocJournalStore store,
             PocTransactionJournal journal, byte[]? targetBytes = null, byte[]? controlBytes = null, OwnerTokenPolicyGateCapability? capability = null)
         {
+            (PocFixtureLease fixtureLease, PocFixtureLeaseEvidence fixtureEvidence) = FileFixtureLease(targetBytes, controlBytes);
             return new(capability ?? CapabilityForTest(), lease, store,
-                new PolicyMutationDecision(true, journal.After.LocalPolicyXml, FixturePath, FixtureHash, DecisionRevision),
-                new VmAttestationResult(true, true), elevated: true, FileFixtureLease(targetBytes, controlBytes), new FixedClock());
+                new PolicyMutationDecision(true, journal.After.LocalPolicyXml, fixtureEvidence.TargetPath, fixtureEvidence.TargetSha256, DecisionRevision),
+                new VmAttestationResult(true, true), elevated: true, fixtureLease, new FixedClock());
         }
 
         private static PocFixtureLease FixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
@@ -348,25 +376,29 @@ namespace Guard.WindowsPoc.Tests.Execution
             return new(new MemoryStream(targetBytes ?? FixtureBytes, writable: true), new MemoryStream(controlBytes ?? ControlBytes, writable: true), FixtureEvidence());
         }
 
-        private static PocFixtureLease FileFixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
-        {
-            return new(TempFixtureStream(targetBytes ?? FixtureBytes), TempFixtureStream(controlBytes ?? ControlBytes),
-                FixtureEvidence(), () => FixtureEvidence().Publisher);
-        }
-
         private static FileStream TempFixtureStream(byte[] bytes)
         {
-            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-            FileStream stream = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.DeleteOnClose);
-            stream.Write(bytes);
-            stream.Flush(flushToDisk: true);
-            stream.Position = 0;
-            return stream;
+            return TempFixtureStream(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), bytes);
         }
 
-        private static PocFixtureLeaseEvidence FixtureEvidence()
+        private static (PocFixtureLease Lease, PocFixtureLeaseEvidence Evidence) FileFixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
         {
-            return new(FixturePath, FixtureHash, ControlPath, ControlHash,
+            string targetPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-target.exe");
+            string controlPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + "-control.exe");
+            PocFixtureLeaseEvidence evidence = FixtureEvidence(targetPath, controlPath);
+            return (new(TempFixtureStream(targetPath, targetBytes ?? FixtureBytes), TempFixtureStream(controlPath, controlBytes ?? ControlBytes),
+                evidence, () => evidence.Publisher), evidence);
+        }
+
+        private static FileStream TempFixtureStream(string path, byte[] bytes)
+        {
+            File.WriteAllBytes(path, bytes);
+            return new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.DeleteOnClose);
+        }
+
+        private static PocFixtureLeaseEvidence FixtureEvidence(string targetPath = FixturePath, string controlPath = ControlPath)
+        {
+            return new(targetPath, FixtureHash, controlPath, ControlHash,
                 new("CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0)), DecisionRevision);
         }
 

@@ -88,14 +88,14 @@ namespace Guard.WindowsPoc.Execution
                 if (_hostRecoveryRequired || await store.HasHostRecoveryRequiredAsync(cleanup.Token).ConfigureAwait(false))
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 PocTransactionJournal? journal = await store.ReadAsync(cleanup.Token).ConfigureAwait(false);
-                bool recoveryBarrier = await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false);
+                PocRecoveryBarrier recoveryBarrier = await store.ReadRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false);
                 if (journal is null)
                 {
-                    if (recoveryBarrier) { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
+                    if (recoveryBarrier != PocRecoveryBarrier.None) { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                     return PocRunResult.Success;
                 }
-                if (recoveryBarrier && (journal.Phase == PocJournalPhase.WritePending
-                    || (journal.Phase == PocJournalPhase.Prepared && journal.Before.SamePolicy(journal.InitialBaseline))))
+                if (recoveryBarrier == PocRecoveryBarrier.Drift
+                    || (recoveryBarrier == PocRecoveryBarrier.Capture && journal.Phase == PocJournalPhase.Prepared && journal.Before.SamePolicy(journal.InitialBaseline)))
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 if (journal.Phase == PocJournalPhase.HostCloneRecoveryRequired) { return PocRunResult.HostCloneRecoveryRequired; }
                 AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
@@ -139,7 +139,7 @@ namespace Guard.WindowsPoc.Execution
             {
                 try { await store.SetHostRecoveryRequiredAsync(timeout.Token).ConfigureAwait(false); }
                 catch (Exception exception) when (Recoverable(exception))
-                { await store.SetRecoveryBarrierAsync(true, timeout.Token).ConfigureAwait(false); }
+                { await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.Drift, timeout.Token).ConfigureAwait(false); }
                 PocTransactionJournal? journal = await store.ReadAsync(timeout.Token).ConfigureAwait(false);
                 if (journal is not null)
                 { await store.SaveAsync(journal.WithPhase(PocJournalPhase.HostCloneRecoveryRequired), timeout.Token).ConfigureAwait(false); }
@@ -151,7 +151,7 @@ namespace Guard.WindowsPoc.Execution
         {
             // Persist before observing: a crash or failed drift-marker save cannot erase an observation.
             // An interrupted capture requires host recovery even if the last policy state is recognizable.
-            await store.SetRecoveryBarrierAsync(true, token).ConfigureAwait(false);
+            await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.Capture, token).ConfigureAwait(false);
             return await gateway.CaptureAsync(token).ConfigureAwait(false);
         }
 

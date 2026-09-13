@@ -105,7 +105,37 @@ function Assert-ExistingDeployment($protectedInputs) {
     $targetSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $fixtureRoot 'target.exe') -ErrorAction Stop
     $controlSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $fixtureRoot 'control.exe') -ErrorAction Stop
     if ($targetSignature.Status -ne 'Valid' -or $controlSignature.Status -ne 'Valid' -or $targetSignature.SignerCertificate.Thumbprint -ne $controlSignature.SignerCertificate.Thumbprint) { Fail 'Existing deployment mismatch.' }
+    Assert-LabCertificate $targetSignature.SignerCertificate
+    foreach ($path in @($applicationRoot, $controllerRoot, $scriptsRoot, $fixtureRoot, $closurePath, $controllerConfigPath, $vmMarkerPath, $ownerProofPath, $memberEvidencePath, $evidenceRoot)) { Assert-ProtectedAcl $path $protectedInputs.OwnerSid $protectedInputs.MemberSids ($path -eq $fixtureRoot) }
+    Get-ChildItem -LiteralPath $controllerRoot -Force -Recurse | ForEach-Object { Assert-ProtectedAcl $_.FullName $protectedInputs.OwnerSid @() $false }
+    Get-ChildItem -LiteralPath $scriptsRoot -Force -Recurse | ForEach-Object { Assert-ProtectedAcl $_.FullName $protectedInputs.OwnerSid @() $false }
+    Get-ChildItem -LiteralPath $fixtureRoot -Force -Recurse | ForEach-Object { Assert-ProtectedAcl $_.FullName $protectedInputs.OwnerSid $protectedInputs.MemberSids $true }
     Validate-Watchdog (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction Stop)
+}
+function Assert-LabCertificate($certificate) {
+    $now = Get-Date
+    $eku = @($certificate.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value })
+    $rsa = $certificate.PrivateKey
+    if ($certificate.Subject -ne $labSubject -or -not $certificate.HasPrivateKey -or $rsa.CspKeyContainerInfo.Exportable -or $rsa.CspKeyContainerInfo.ProviderName -ne 'Microsoft Enhanced RSA and AES Cryptographic Provider' -or $rsa.KeySize -ne 3072 -or $certificate.SignatureAlgorithm.FriendlyName -ne 'sha256RSA' -or $eku -notcontains '1.3.6.1.5.5.7.3.3' -or $certificate.NotBefore -gt $now -or $certificate.NotAfter -le $now -or ($certificate.NotAfter - $certificate.NotBefore).TotalDays -gt 7) { Fail 'Certificate policy mismatch.' }
+    foreach ($storePath in @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
+        if (@(Get-ChildItem -LiteralPath $storePath -ErrorAction Stop | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint }).Count -ne 1) { Fail 'Certificate trust binding mismatch.' }
+    }
+}
+function Assert-ProtectedAcl([string] $path, [string] $ownerSid, [string[]] $memberSids, [bool] $fixture) {
+    Assert-NoReparse $path
+    $security = Get-Acl -LiteralPath $path -ErrorAction Stop
+    if ($security.Owner -ne 'S-1-5-18' -or -not $security.AreAccessRulesProtected) { Fail 'Protected ACL mismatch.' }
+    $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Modify -bor [Security.AccessControl.FileSystemRights]::FullControl -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+    $seenSystem = $false; $seenOwner = $false
+    foreach ($rule in $security.Access) {
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        if ($sid -eq 'S-1-5-18') { $seenSystem = (($rule.FileSystemRights -band $writeMask) -ne 0); continue }
+        if ($sid -eq $ownerSid) { $seenOwner = (($rule.FileSystemRights -band $writeMask) -eq 0); continue }
+        if ($fixture -and $memberSids -contains $sid -and (($rule.FileSystemRights -band $writeMask) -eq 0)) { continue }
+        if (($rule.FileSystemRights -band $writeMask) -ne 0) { Fail 'Broad protected ACL write right.' }
+    }
+    if (-not $seenSystem -or -not $seenOwner) { Fail 'Protected ACL principal mismatch.' }
 }
 function Set-ProtectedAcl([string] $path, [string] $ownerSid, [string[]] $memberSids, [switch] $Fixture) {
     Assert-NoReparse $path
@@ -124,6 +154,7 @@ function Set-ProtectedAcl([string] $path, [string] $ownerSid, [string[]] $member
         }
     }
     if ($PSCmdlet.ShouldProcess($path, 'Apply protected ACL')) { Set-Acl -LiteralPath $path -AclObject $security -ErrorAction Stop }
+    Assert-ProtectedAcl $path $ownerSid $memberSids ([bool]$Fixture)
 }
 function Read-ProtectedInputs {
     foreach ($path in @($vmMarkerPath, $ownerProofPath, $memberEvidencePath)) { if (-not (Test-Path -LiteralPath $path)) { Fail "Missing protected input." }; Assert-NoReparse $path }
@@ -172,8 +203,7 @@ function Get-LabCertificate {
     if ($existing.Count -gt 1) { Fail 'Ambiguous lab certificate.' }
     if ($existing.Count -eq 1) {
         $certificate = $existing[0]
-        $rsa = $certificate.PrivateKey
-        if (-not $certificate.HasPrivateKey -or $rsa.CspKeyContainerInfo.Exportable -or $rsa.KeySize -ne 3072 -or $rsa.CspKeyContainerInfo.ProviderName -ne 'Microsoft Enhanced RSA and AES Cryptographic Provider' -or $certificate.NotBefore -gt (Get-Date) -or $certificate.NotAfter -le (Get-Date).AddHours(1) -or ($certificate.NotAfter - $certificate.NotBefore).TotalDays -gt 7) { Fail 'Certificate policy mismatch; existing lab certificate cannot be rotated.' }
+        Assert-LabCertificate $certificate
         return $certificate
     }
     if (-not $PSCmdlet.ShouldProcess('LocalMachine certificate store', 'Create non-exportable disposable lab code-signing certificate')) { return $null }
@@ -279,6 +309,7 @@ Merge-FixturePublish $sourceRoot 'tools\Guard.WindowsPoc.Fixture\Guard.WindowsPo
 Merge-FixturePublish $sourceRoot 'tools\Guard.WindowsPoc.ControlFixture\Guard.WindowsPoc.ControlFixture.csproj' 'ComsPcGuardPoc.PublisherControl.exe' 'control.exe'
 $certificate = Get-LabCertificate; if ($null -eq $certificate) { return }
 Install-LabPublicTrust $certificate
+Assert-LabCertificate $certificate
 Sign-Fixtures $certificate
 Write-Closure
 Write-ControllerConfig $inputs

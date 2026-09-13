@@ -57,3 +57,15 @@
 - PASS: focused provisioning contract tests after the correction.
 - PASS: PowerShell AST parse and `git diff --check`.
 - Native Windows acceptance remains NOT_RUN_WINDOWS_ONLY.
+
+## Fix round 3
+
+### RED/GREEN
+
+- Focused provisioning contracts remained green after adding executable ACL and certificate-trust validation paths; PowerShell AST parsing and `git diff --check` also passed.
+
+### Changes/evidence
+
+- Existing-deployment proof now checks the exact signed certificate against LocalMachine My/Root/TrustedPublisher, code-signing EKU, SHA-256, non-exportability, provider, key size, and short validity before accepting a rerun.
+- ACL application now immediately verifies SYSTEM ownership, protected inheritance, SYSTEM write capability, exact Owner read-only capability, fixture-only Member read/execute, no broad write rights, and no reparse points; existing deployment recursively revalidates controller, scripts, fixtures, configs and evidence boundaries.
+- NOT_RUN_WINDOWS_ONLY: actual Windows ACL/store/task/firmware execution remains deferred to the disposable VM.

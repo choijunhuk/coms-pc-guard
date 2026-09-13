@@ -311,6 +311,16 @@ namespace Guard.WindowsPoc.Safety
         }
 
         [SupportedOSPlatform("windows")]
+        internal static void ValidateFixtureEntry(FileSystemInfo entry, FileStream? held = null)
+        {
+            OwnerTokenPathEvidence evidence = held is null
+                ? ReadProtection(entry, OwnerTokenPathEvidence.ApplicationDirectoryRole, LocalSystemSid)
+                : ReadProtection(held, OwnerTokenPathEvidence.ProofFileRole, LocalSystemSid);
+            if (evidence.Owner != LocalSystemSid || !evidence.AclKnown || !evidence.ProtectedAcl || evidence.ReparsePoint
+                || evidence.UntrustedWrite || evidence.UntrustedReplacement) { throw Refused(); }
+        }
+
+        [SupportedOSPlatform("windows")]
         private static NativeVmMarker ReadNativeVmMarker(string ownerSid)
         {
             using FileStream file = new(VmMarkerPath, FileMode.Open, FileAccess.Read, FileShare.Read);

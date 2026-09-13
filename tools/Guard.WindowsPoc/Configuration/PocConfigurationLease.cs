@@ -23,7 +23,7 @@ namespace Guard.WindowsPoc.Configuration
             Revalidate();
             try
             {
-                foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath })
+                foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, Native.PocFixtureClosureManifest.ManifestPath })
                 {
                     if (path == OwnerTokenAttestation.ProofPath && !File.Exists(path)) { continue; }
                     FileStream retained = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -58,12 +58,18 @@ namespace Guard.WindowsPoc.Configuration
         private void ValidateFile(FileStream file, string hash)
         {
             OwnerTokenAttestation.ValidateProtectedFile(file, Value.OwnerSid);
+            ValidateRetainedPath(file);
+            file.Position = 0;
+            if (file.Length is <= 0 or > 65536 || Convert.ToHexString(SHA256.HashData(file)) != hash)
+            { throw new InvalidOperationException("Controller configuration changed."); }
+        }
+
+        [SupportedOSPlatform("windows")]
+        internal static void ValidateRetainedPath(FileStream file)
+        {
             char[] path = new char[1024];
             uint length = GetFinalPathNameByHandle(file.SafeFileHandle, path, 1024, 0);
             if (length == 0 || length >= 1024 || !string.Equals(new string(path, 0, (int)length), @"\\?\" + file.Name, StringComparison.OrdinalIgnoreCase))
-            { throw new InvalidOperationException("Controller configuration changed."); }
-            file.Position = 0;
-            if (file.Length is <= 0 or > 65536 || Convert.ToHexString(SHA256.HashData(file)) != hash)
             { throw new InvalidOperationException("Controller configuration changed."); }
         }
 

@@ -1,12 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <OutputType>Exe</OutputType>
     <AssemblyName>ComsPcGuardPoc.DenyTarget</AssemblyName>
     <Product>COMS PC Guard PoC Deny Target</Product>
     <Description>Harmless isolated VM Publisher deny target</Description>
     <Company>COMS VM Lab</Company>
     <Version>1.0.0</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
   <ItemGroup><Compile Include="../Guard.WindowsPoc/Fixtures/HarmlessFixture.cs" Link="HarmlessFixture.cs" /></ItemGroup>
 </Project>

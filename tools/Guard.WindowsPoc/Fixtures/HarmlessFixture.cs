@@ -1,5 +1,7 @@
 using System.Security.Principal;
 using System.Text.Json;
+using System.IO.Pipes;
+using System.Text;
 
 namespace Guard.WindowsPoc.Fixtures
 {
@@ -36,8 +38,23 @@ namespace Guard.WindowsPoc.Fixtures
             writer.WriteLine(marker);
             writer.Flush();
             file.Flush(flushToDisk: true);
-            Console.WriteLine(marker);
-            return 0;
+            using CancellationTokenSource deadline = new(TimeSpan.FromMinutes(2));
+            using NamedPipeClientStream pipe = new(".", "ComsPcGuardPoc.Probe." + runId.ToString("D") + "." + name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            try
+            {
+                pipe.ConnectAsync(deadline.Token).GetAwaiter().GetResult();
+                using StreamReader input = new(pipe, Encoding.UTF8, true, 1024, leaveOpen: true);
+                using StreamWriter output = new(pipe, new UTF8Encoding(false), 1024, leaveOpen: true) { AutoFlush = true };
+                char[] challenge = new char[65];
+                if (input.ReadBlockAsync(challenge.AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult() != 65 || challenge[64] != '\n') { return 3; }
+                string nonce = new(challenge, 0, 64);
+                if (!nonce.All(char.IsAsciiHexDigit)) { return 3; }
+                output.WriteAsync((nonce + "\n").AsMemory(), deadline.Token).GetAwaiter().GetResult();
+                output.FlushAsync(deadline.Token).GetAwaiter().GetResult();
+                _ = input.ReadAsync(new char[1].AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult();
+                return 0;
+            }
+            catch (Exception error) when (error is IOException or OperationCanceledException) { return 3; }
         }
     }
 }

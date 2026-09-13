@@ -12,29 +12,7 @@ if ($env:OS -ne 'Windows_NT') { throw 'Probe refused.' }
 if ($PSCommandPath -cne 'C:\ProgramData\ComsPcGuardPoc\Scripts\Test-ComsPocFixture.ps1') { throw 'Fixed adapter path required.' }
 $root = 'C:\ComsPcGuardPoc\Fixtures'
 if (-not $Collect) {
-    if ([System.Diagnostics.Process]::GetCurrentProcess().SessionId -le 0 -or -not [Environment]::UserInteractive) { throw 'Interactive session required.' }
-    if (-not $PSCmdlet.ShouldProcess('Harmless signed fixtures', 'Probe actual interactive token')) { return }
-    foreach ($name in @('control.exe', 'target.exe')) {
-        $path = Join-Path $root $name
-        if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Fixture reparse point refused.' }
-        if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') { throw 'Signed fixture required.' }
-        $start = New-Object System.Diagnostics.ProcessStartInfo
-        $start.FileName = $path
-        $start.Arguments = ([guid]$RunId).ToString('D')
-        $start.UseShellExecute = $false
-        $start.RedirectStandardOutput = $true
-        $start.RedirectStandardError = $true
-        try {
-            $process = [Diagnostics.Process]::Start($start)
-            if (-not $process.WaitForExit(10000)) { $process.Kill(); throw 'Fixture timeout.' }
-            if ($process.StandardOutput.ReadToEnd().Length -gt 16384 -or $process.StandardError.ReadToEnd().Length -gt 16384) { throw 'Fixture output exceeded bound.' }
-            $process.Dispose()
-        } catch [System.ComponentModel.Win32Exception] {
-            if ($name -ne 'target.exe' -or $_.Exception.NativeErrorCode -ne 1260) { throw }
-        }
-    }
-    [pscustomobject]@{ Status = 'ProbeAttempted'; RunId = ([guid]$RunId).ToString('D') } | ConvertTo-Json -Compress
-    return
+    throw 'Fixture launch requires the protected C# interactive-session broker.'
 }
 if (-not [Console]::IsInputRedirected) { throw 'Structured controller input required.' }
 $buffer = New-Object char[] 65537

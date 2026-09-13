@@ -31,6 +31,57 @@ namespace Guard.WindowsPoc.Tests.Execution
         private static readonly string FixtureScratchRoot = Path.Combine(Environment.CurrentDirectory, "poc-fixture-tests");
 
         [TestMethod]
+        public void ApphostHandlesWithoutClosureCannotReachPublisherAuthorization()
+        {
+            (PocFixtureLease lease, PocFixtureLeaseEvidence evidence) = FileFixtureLease();
+            try
+            {
+                using (lease)
+                {
+                    InvalidOperationException failure = Assert.ThrowsExactly<InvalidOperationException>(() => lease.Revalidate(
+                        new(true, First.LocalPolicyXml, evidence.TargetPath, evidence.TargetSha256, DecisionRevision)));
+                    StringAssert.Contains(failure.Message, "closure");
+                }
+            }
+            finally { File.Delete(evidence.TargetPath); File.Delete(evidence.ControlPath); }
+        }
+
+        [TestMethod]
+        public async Task InitialApplyUsesRetainedDurableProofInsteadOfInventoryRestorationClaim()
+        {
+            AppLockerNativeSnapshot snapshot = PowerShellCommandRunner.ParseSnapshot(PowerShellCommandRunnerTests.Complete);
+            Assert.IsFalse(snapshot.RestorationEligible);
+            Configuration.PocConfiguration config = new(1, Owner, ["S-1-5-21-1-2-3-1002", "S-1-5-21-1-2-3-1003"], new string('a', 32), "COMS-PC-Guard-x64-Lab", @"C:\ComsPcGuardPoc\Fixtures");
+            PocCompiledStage stage = PocTransitionCompiler.Compile(config, FixtureEvidence().Publisher, snapshot, Now, false)[0];
+            PolicyMutationGuard guard = new(stage.Preview, Owner, FixturePath, FixtureHash, new FixedClock());
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, Snapshot(stage.Xml), "proof", "lease", Now).WithPhase(PocJournalPhase.WritePending);
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                using WindowsPocStateLease state = WindowsPocStateLease.Open(Owner, () => [new(false, Owner, true, false)],
+                    () => new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 1), Evidence);
+                using DurablePocJournalStore store = new(state);
+                OwnerTokenPolicyGateCapability capability = CapabilityForTest();
+                CrossProcessPolicyGate gate = new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
+                typeof(CrossProcessPolicyGate).GetField("_heldCapability", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(gate, capability);
+                typeof(WindowsPocStateLease).GetField("_capability", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(state, capability);
+                _ = await gate.RunAsync(async () =>
+                {
+                    Assert.IsFalse(guard.EvaluateInitial(new(true, true), snapshot, true, journal, null).Allowed);
+                    _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => PocDurableBaselineProof.CreateAsync(capability, state, store, journal, snapshot, CancellationToken.None));
+                    await store.SaveAsync(journal.WithPhase(PocJournalPhase.Prepared), CancellationToken.None);
+                    await store.SaveAsync(journal, CancellationToken.None);
+                    await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.Capture, CancellationToken.None);
+                    PocDurableBaselineProof proof = await PocDurableBaselineProof.CreateAsync(capability, state, store, journal, snapshot, CancellationToken.None);
+                    Assert.IsTrue(guard.EvaluateInitial(new(true, true), snapshot, true, journal, proof).Allowed);
+                    Assert.IsFalse(guard.EvaluateInitial(new(true, true), snapshot with { Revision = "mismatch" }, true, journal, proof).Allowed);
+                    return true;
+                }, CancellationToken.None);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [TestMethod]
         public async Task CaptureConvertsTrustedNativeSnapshotIntoPortablePolicySnapshot()
         {
             RecordingRunner runner = new();

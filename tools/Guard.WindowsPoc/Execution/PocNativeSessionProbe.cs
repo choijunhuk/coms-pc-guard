@@ -10,7 +10,7 @@ namespace Guard.WindowsPoc.Execution
     internal interface IPocSessionProbe { Task<bool> ProbeAsync(CancellationToken token); }
 
     internal sealed class PocNativeSessionProbe(PocConfiguration config, IReadOnlyList<PocCompiledStage> stages,
-        TextWriter output, Action revalidate) : IPocSessionProbe
+        TextWriter output, Action revalidate, PocFixtureLease fixtures, OwnerTokenPolicyGateCapability capability) : IPocSessionProbe
     {
         private int _stage;
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -38,23 +38,35 @@ namespace Guard.WindowsPoc.Execution
                 })).ConfigureAwait(false);
                 await output.FlushAsync(token).ConfigureAwait(false);
                 bool matched = false;
+                PocSessionBroker.PocBrokerAttempt? attempt = null;
+                using CancellationTokenSource requestDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                requestDeadline.CancelAfter(TimeSpan.FromMinutes(2));
+                CancellationToken probeToken = requestDeadline.Token;
                 using IScriptTrustLease lease = new WindowsScriptTrustVerifier().Verify(WindowsScriptTrustVerifier.ProbeScriptPath);
-                while (DateTimeOffset.UtcNow - request.StartedAtUtc < TimeSpan.FromMinutes(2))
+                try
                 {
-                    token.ThrowIfCancellationRequested();
-                    revalidate(); lease.Revalidate();
-                    ProcessStartInfo info = CreateCollectStartInfo();
-                    using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    deadline.CancelAfter(TimeSpan.FromSeconds(10));
-                    string json = await PowerShellCommandRunner.ExecuteProcessAsync(info, deadline.Token, JsonSerializer.Serialize(request)).ConfigureAwait(false);
-                    if (json.Length > 262144) { return false; }
-                    ProbeEnvelope evidence = JsonSerializer.Deserialize<ProbeEnvelope>(json, JsonOptions) ?? throw new InvalidOperationException("Probe evidence unavailable.");
-                    lease.Revalidate(); revalidate();
-                    if (evidence.RunId != request.RunId) { return false; }
-                    if (PocProbeEvidence.Validate(request, evidence.Control, evidence.Target, evidence.Events, DateTimeOffset.UtcNow))
-                    { matched = true; break; }
-                    await Task.Delay(TimeSpan.FromSeconds(1), token).ConfigureAwait(false);
+                    while (DateTimeOffset.UtcNow - request.StartedAtUtc < TimeSpan.FromMinutes(2))
+                    {
+                        probeToken.ThrowIfCancellationRequested();
+                        revalidate(); lease.Revalidate();
+                        fixtures.RevalidateClosure();
+                        attempt ??= await PocSessionBroker.TryStartAsync(request, fixtures, capability, probeToken).ConfigureAwait(false);
+                        if (attempt is null) { await Task.Delay(TimeSpan.FromSeconds(1), probeToken).ConfigureAwait(false); continue; }
+                        attempt.Revalidate();
+                        ProcessStartInfo info = CreateCollectStartInfo();
+                        using CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+                        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                        string json = await PowerShellCommandRunner.ExecuteProcessAsync(info, deadline.Token, JsonSerializer.Serialize(request)).ConfigureAwait(false);
+                        if (json.Length > 262144) { return false; }
+                        ProbeEnvelope evidence = JsonSerializer.Deserialize<ProbeEnvelope>(json, JsonOptions) ?? throw new InvalidOperationException("Probe evidence unavailable.");
+                        lease.Revalidate(); revalidate();
+                        if (evidence.RunId != request.RunId) { return false; }
+                        if (PocProbeEvidence.ValidateBroker(request, evidence.Control, evidence.Target, evidence.Events, DateTimeOffset.UtcNow, attempt))
+                        { matched = true; break; }
+                        await Task.Delay(TimeSpan.FromSeconds(1), probeToken).ConfigureAwait(false);
+                    }
                 }
+                finally { attempt?.Dispose(); }
                 if (!matched) { return false; }
             }
             return true;

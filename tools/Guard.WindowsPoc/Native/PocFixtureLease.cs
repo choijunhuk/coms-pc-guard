@@ -6,9 +6,21 @@ using System.Text.Json;
 
 namespace Guard.WindowsPoc.Native
 {
-    internal sealed record PocFixturePublisherEvidence(string Publisher, string Product, string Binary, Version LowVersion, Version HighVersion);
+    internal sealed record PocFixturePublisherEvidence(string Publisher, string Product, string Binary, Version LowVersion, Version HighVersion)
+    {
+        internal string? CertificateThumbprint { get; init; }
+        internal bool SharesSignerWithDistinctFixture(PocFixturePublisherEvidence other)
+        {
+            return CertificateThumbprint is { Length: 40 } && CertificateThumbprint.All(char.IsAsciiHexDigit)
+                && CertificateThumbprint == other.CertificateThumbprint && Publisher == other.Publisher && Product != other.Product && Binary != other.Binary;
+        }
+    }
     internal sealed record PocFixtureLeaseEvidence(string TargetPath, string TargetSha256, string ControlPath, string ControlSha256,
-        PocFixturePublisherEvidence Publisher, string InventoryRevision);
+        PocFixturePublisherEvidence Publisher, string InventoryRevision)
+    {
+        internal string? ClosureManifestHash { get; init; }
+        internal string? ClosureOwnerSid { get; init; }
+    }
 
     internal sealed class PocFixtureLease : IDisposable
     {
@@ -17,6 +29,7 @@ namespace Guard.WindowsPoc.Native
         private readonly IPocFixturePublisherVerifier _publisherVerifier;
         private readonly PocFixtureLeaseEvidence _expected;
         private readonly bool _deleteOnDispose;
+        private readonly PocFixtureClosureLease? _closure;
 
         private bool _disposed;
 
@@ -36,6 +49,8 @@ namespace Guard.WindowsPoc.Native
                     || HasReparseComponent(_target.Name) || HasReparseComponent(_control.Name))
                 { throw new InvalidOperationException("Protected fixture handles must remain retained and path-bound."); }
                 RevalidateHashes(expected.TargetSha256, expected.ControlSha256);
+                if (expected.ClosureManifestHash is not null)
+                { _closure = PocFixtureClosureLease.Open(expected.ClosureOwnerSid ?? throw new InvalidOperationException("Closure Owner required."), expected.ClosureManifestHash); }
             }
             catch
             {
@@ -48,6 +63,8 @@ namespace Guard.WindowsPoc.Native
         {
             ArgumentNullException.ThrowIfNull(decision);
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_closure is null) { throw new InvalidOperationException("Complete protected code closure required for authorization."); }
+            _closure.Revalidate();
             PocFixturePublisherEvidence publisher = _publisherVerifier.ReadPublisher(_target);
             PocFixturePublisherEvidence controlPublisher = _publisherVerifier.ReadPublisher(_control);
             RevalidateHashes(_expected.TargetSha256, _expected.ControlSha256);
@@ -58,23 +75,31 @@ namespace Guard.WindowsPoc.Native
                 && _expected.ControlSha256.All(char.IsAsciiHexDigit)
                 && _expected.InventoryRevision == decision.InventoryRevision
                 && publisher == _expected.Publisher
-                && controlPublisher.Publisher == publisher.Publisher && controlPublisher.Product != publisher.Product
-                && controlPublisher.Binary != publisher.Binary
+                && publisher.SharesSignerWithDistinctFixture(controlPublisher)
                 ? true : throw new InvalidOperationException("Protected fixture evidence unavailable or changed.");
         }
 
-        internal static PocFixtureLeaseEvidence ReadNativeEvidence(string inventoryRevision)
+        internal static PocFixtureLeaseEvidence ReadNativeEvidence(string inventoryRevision, string? ownerSid = null)
         {
             if (!OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY"); }
+            using PocFixtureClosureLease closure = PocFixtureClosureLease.Open(ownerSid ?? throw new InvalidOperationException("Protected closure Owner required."));
             const string targetPath = @"C:\ComsPcGuardPoc\Fixtures\target.exe";
             const string controlPath = @"C:\ComsPcGuardPoc\Fixtures\control.exe";
             using FileStream target = OpenRetainedReadHandle(targetPath);
             using FileStream control = OpenRetainedReadHandle(controlPath);
             PocFixturePublisherEvidence publisher = WindowsAuthenticodeFixturePublisherVerifier.Instance.ReadPublisher(target);
             PocFixturePublisherEvidence controlPublisher = WindowsAuthenticodeFixturePublisherVerifier.Instance.ReadPublisher(control);
-            return publisher.Publisher != controlPublisher.Publisher || publisher.Product == controlPublisher.Product || publisher.Binary == controlPublisher.Binary
+            return !publisher.SharesSignerWithDistinctFixture(controlPublisher)
                 ? throw new InvalidOperationException("Distinct signed fixture identities required.")
-                : new(targetPath, Hash(target), controlPath, Hash(control), publisher, inventoryRevision);
+                : new(targetPath, Hash(target), controlPath, Hash(control), publisher, inventoryRevision) { ClosureManifestHash = closure.ManifestHash, ClosureOwnerSid = ownerSid };
+        }
+
+        internal void RevalidateClosure()
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_closure is null) { throw new InvalidOperationException("Complete protected code closure required."); }
+            _closure.Revalidate();
+            RevalidateHashes(_expected.TargetSha256, _expected.ControlSha256);
         }
 
         internal static PocFixtureLease Open(PocFixtureLeaseEvidence expected)
@@ -166,6 +191,7 @@ namespace Guard.WindowsPoc.Native
             string controlPath = _control.Name;
             _target.Dispose();
             _control.Dispose();
+            _closure?.Dispose();
             if (_deleteOnDispose)
             {
                 TryDelete(targetPath);
@@ -184,12 +210,13 @@ namespace Guard.WindowsPoc.Native
                 if (exitCode != 0) { throw new InvalidOperationException("Authenticode fixture evidence unavailable: " + error.Trim()); }
                 PublisherRecord record = JsonSerializer.Deserialize<PublisherRecord>(output) ?? throw new InvalidOperationException("Authenticode fixture evidence unavailable.");
                 return new(record.Publisher ?? "", record.Product ?? "", record.Binary ?? Path.GetFileName(target.Name),
-                    ParseVersion(record.LowVersion), ParseVersion(record.HighVersion));
+                    ParseVersion(record.LowVersion), ParseVersion(record.HighVersion))
+                { CertificateThumbprint = record.CertificateThumbprint?.ToUpperInvariant() };
             }
 
             internal static ProcessStartInfo CreateStartInfo(string targetPath)
             {
-                const string script = "Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $files=@(Get-AppLockerFileInformation -Path $path); if ($files.Count -ne 1 -or $null -eq $files[0].Publisher) { throw 'Publisher unavailable.' }; $pub=$files[0].Publisher; [pscustomobject]@{ Publisher=$pub.PublisherName; Product=$pub.ProductName; Binary=$pub.BinaryName; LowVersion=$pub.BinaryVersion.ToString(); HighVersion=$pub.BinaryVersion.ToString() } | ConvertTo-Json -Compress";
+                const string script = "Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $files=@(Get-AppLockerFileInformation -Path $path); if ($files.Count -ne 1 -or $null -eq $files[0].Publisher) { throw 'Publisher unavailable.' }; $pub=$files[0].Publisher; [pscustomobject]@{ Publisher=$pub.PublisherName; Product=$pub.ProductName; Binary=$pub.BinaryName; LowVersion=$pub.BinaryVersion.ToString(); HighVersion=$pub.BinaryVersion.ToString(); CertificateThumbprint=$sig.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress";
                 ProcessStartInfo info = new(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
                 {
                     UseShellExecute = false,
@@ -259,7 +286,7 @@ namespace Guard.WindowsPoc.Native
                 return Version.TryParse(value, out Version? version) ? version : new Version(0, 0, 0, 0);
             }
 
-            private sealed record PublisherRecord(string? Publisher, string? Product, string? Binary, string? LowVersion, string? HighVersion);
+            private sealed record PublisherRecord(string? Publisher, string? Product, string? Binary, string? LowVersion, string? HighVersion, string? CertificateThumbprint);
         }
 
         private interface IPocFixturePublisherVerifier

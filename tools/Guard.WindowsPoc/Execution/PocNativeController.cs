@@ -31,7 +31,7 @@ namespace Guard.WindowsPoc.Execution
             }
             catch (OperationCanceledException) { return PocExitCode.TimedOut; }
             catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException
-                or ArgumentException or System.ComponentModel.Win32Exception or JsonException or PlatformNotSupportedException or TimeoutException)
+                or ArgumentException or System.ComponentModel.Win32Exception or JsonException or PlatformNotSupportedException or TimeoutException or KeyNotFoundException)
             { return PocExitCode.Refused; }
         }
 
@@ -53,19 +53,18 @@ namespace Guard.WindowsPoc.Execution
                 if (command.Kind == PocCommandKind.Run && await store.ReadAsync(token).ConfigureAwait(false) is not null)
                 { return PocExitCode.Refused; }
                 AppLockerNativeSnapshot? initial = command.Kind == PocCommandKind.Run
-                    ? (await native.RunAsync(new(WindowsCommand.Capture), token).ConfigureAwait(false)).Snapshot
-                    ?? throw new InvalidOperationException("Inventory unavailable.") : null;
+                    ? await PocProtectedPreflight.CaptureAsync(native, store, TimeProvider.System, token).ConfigureAwait(false) : null;
                 if (initial is not null && !NativePocPolicyGateway.Convert(new(initial)).IsReady(TimeProvider.System.GetUtcNow()))
                 { return PocExitCode.Refused; }
-                PocFixtureLeaseEvidence fixtures = PocFixtureLease.ReadNativeEvidence(initial?.Revision ?? "recovery");
+                PocFixtureLeaseEvidence fixtures = PocFixtureLease.ReadNativeEvidence(initial?.Revision ?? "recovery", config.OwnerSid);
                 using PocFixtureLease retainedFixtures = PocFixtureLease.Open(fixtures);
                 PocNativeAuthorityFactory factory = new(capability, state, store, configuration, fixtures, native);
                 IReadOnlyList<PocCompiledStage> stages = initial is null ? [] : PocTransitionCompiler.Compile(config, fixtures.Publisher, initial,
                     TimeProvider.System.GetUtcNow(), !NativePocPolicyGateway.Convert(new(initial)).IsEmpty);
-                PocNativeSessionProbe probe = new(config, stages, output, configuration.Revalidate);
+                PocNativeSessionProbe probe = new(config, stages, output, configuration.Revalidate, retainedFixtures, capability);
                 NativePocPolicyGateway gateway = new(native, factory: factory, probe: probe);
                 WindowsPocRunner runner = new(gateway, store, new HeldGate(capability), TimeProvider.System,
-                    PolicyMutationDecision.Hash(config.OwnerSid + fixtures.TargetSha256 + fixtures.ControlSha256),
+                    PolicyMutationDecision.Hash(config.OwnerSid + fixtures.TargetSha256 + fixtures.ControlSha256 + fixtures.ClosureManifestHash),
                     PolicyMutationDecision.Hash(config.Nonce), async result =>
                         await output.WriteLineAsync(JsonSerializer.Serialize(new { Status = result.ToString(), Tpm = "BLOCKED_TPM_NEM" })).ConfigureAwait(false));
                 PocRunResult result = command.Kind == PocCommandKind.Recover

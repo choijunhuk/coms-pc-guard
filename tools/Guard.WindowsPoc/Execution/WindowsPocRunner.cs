@@ -43,11 +43,12 @@ namespace Guard.WindowsPoc.Execution
                 { drift = true; throw new InvalidOperationException("Initial inventory is not eligible."); }
                 await store.SetRecoveryBarrierAsync(false, token).ConfigureAwait(false);
                 AppLockerPolicySnapshot expected = baseline;
-                foreach (AppLockerPolicySnapshot after in transitions)
+                foreach (AppLockerPolicySnapshot desired in transitions)
                 {
                     token.ThrowIfCancellationRequested();
                     AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !fresh.SamePolicy(expected)) { drift = true; break; }
+                    AppLockerPolicySnapshot after = desired with { CapturedAtUtc = clock.GetUtcNow() };
                     await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token).ConfigureAwait(false);
                     PocTransactionJournal journal = PocTransactionJournal.Prepare(baseline, fresh, after, ownershipEvidence, recoveryLease, clock.GetUtcNow());
                     await store.SaveAsync(journal, token).ConfigureAwait(false);

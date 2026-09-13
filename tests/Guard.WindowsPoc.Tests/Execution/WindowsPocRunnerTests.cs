@@ -14,6 +14,62 @@ namespace Guard.WindowsPoc.Tests.Execution
         private static readonly AppLockerPolicySnapshot Second = Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"Enabled\" /></AppLockerPolicy>");
 
         [TestMethod]
+        public async Task LongInteractiveProbesDoNotExpireDesiredTransitions()
+        {
+            AdvancingClock clock = new();
+            SlowProbeGateway gateway = new(clock);
+            MemoryJournal store = new();
+            WindowsPocRunner runner = new(gateway, store, new TestGate(), clock, "owner-proof", "lease", _ => Task.CompletedTask);
+            Assert.AreEqual(PocRunResult.Success, await runner.RunAsync([First, Second, First, Second]));
+            Assert.AreEqual(4, gateway.Probes);
+            Assert.IsTrue(gateway.Current.IsEmpty);
+        }
+
+        private sealed class AdvancingClock : TimeProvider
+        {
+            internal DateTimeOffset Current { get; set; } = Now;
+            public override DateTimeOffset GetUtcNow() { return Current; }
+        }
+
+        [TestMethod]
+        public async Task PreflightCaptureArmsBeforeObservationAndCrashOrDriftStaysLatched()
+        {
+            foreach (bool crash in new[] { false, true })
+            {
+                MemoryJournal store = new();
+                PreflightTransport transport = new(store, crash);
+                _ = await Assert.ThrowsAsync<Exception>(() => PocProtectedPreflight.CaptureAsync(transport, store, new FixedClock(), CancellationToken.None));
+                Assert.AreEqual(PocRecoveryBarrier.Capture, store.RecoveryBarrierKind);
+                Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(new(), store).RecoverAsync());
+            }
+        }
+
+        private sealed class PreflightTransport(MemoryJournal store, bool crash) : IWindowsCommandRunner
+        {
+            public Task<WindowsCommandResult> RunAsync(WindowsCommandRequest request, CancellationToken cancellationToken)
+            {
+                Assert.AreEqual(PocRecoveryBarrier.Capture, store.RecoveryBarrierKind);
+                return crash
+                    ? throw new IOException("process death during native preflight")
+                    : Task.FromResult(new WindowsCommandResult(Safety.PolicyMutationGuardTests.Snapshot with { Inventory = new() }));
+            }
+        }
+
+        private sealed class SlowProbeGateway(AdvancingClock clock) : IPocPolicyGateway
+        {
+            internal AppLockerPolicySnapshot Current { get; private set; } = Empty;
+            internal int Probes { get; private set; }
+            public Task<AppLockerPolicySnapshot> CaptureAsync(CancellationToken token) { return Task.FromResult(Current with { CapturedAtUtc = clock.Current }); }
+            public Task WriteAsync(PocTransactionJournal journal, bool restore, CancellationToken token)
+            {
+                Assert.IsTrue(journal.After.IsReady(clock.Current));
+                Current = journal.After;
+                return Task.CompletedTask;
+            }
+            public Task<bool> ProbeAsync(CancellationToken token) { Probes++; clock.Current = clock.Current.AddMinutes(1); return Task.FromResult(true); }
+        }
+
+        [TestMethod]
         public async Task SuccessRestoresInitialBaselineAfterBothTransitions()
         {
             ScriptedGateway gateway = new();

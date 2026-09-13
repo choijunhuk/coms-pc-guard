@@ -14,6 +14,26 @@ namespace Guard.WindowsPoc.Execution
 
     internal static class PocProbeEvidence
     {
+        internal static bool ValidateBroker(PocProbeRequest request, PocProbeMarker? control, PocProbeMarker? target,
+            IReadOnlyList<PocProbeEvent> events, DateTimeOffset now, PocSessionBroker.PocBrokerAttempt? attempt)
+        {
+            if (attempt is null || !OperatingSystem.IsWindows()) { return false; }
+            attempt.Revalidate();
+            PocOsProcessEvidence actualControl = attempt.Control.Evidence;
+            if (control is null || control.ProcessId != actualControl.Pid || control.SessionId != actualControl.Session
+                || control.TokenSid != actualControl.Sid || request.ExpectedAllowed != (attempt.Target is not null)
+                || (!request.ExpectedAllowed && !attempt.PolicyDenied)) { return false; }
+            if (attempt.Target is { } actualTarget && (target is null || target.ProcessId != actualTarget.Pid
+                || target.SessionId != actualTarget.Evidence.Session || target.SessionId != actualControl.Session)) { return false; }
+            bool controlEvent = events.Any(item => item.EventId == 8002 && item.ProcessId == actualControl.Pid
+                && item.TokenSid == actualControl.Sid && string.Equals(item.ExecutablePath, actualControl.Path, StringComparison.OrdinalIgnoreCase)
+                && item.TimeCreatedUtc >= request.StartedAtUtc && item.TimeCreatedUtc <= now);
+            DateTimeOffset attemptedAt = attempt.TargetAttemptedAtUtc;
+            return controlEvent && Validate(request, control, target,
+                [.. events.Where(item => item.TimeCreatedUtc >= attemptedAt)], now);
+        }
+
+        // Correlation of untrusted observations only. Production acceptance additionally requires ValidateBroker.
         internal static bool Validate(PocProbeRequest request, PocProbeMarker? control, PocProbeMarker? target,
             IReadOnlyList<PocProbeEvent> events, DateTimeOffset now)
         {
@@ -25,7 +45,7 @@ namespace Guard.WindowsPoc.Execution
                 && events.Count <= 256 && events.Any(item => item.TokenSid == request.TokenSid
                 && string.Equals(item.ExecutablePath, request.TargetPath, StringComparison.OrdinalIgnoreCase)
                 && item.EventId == request.EventId && (request.RuleId is null || RuleMatches(item.RuleId, request.RuleId))
-                && item.ProcessId > 0 && (!request.ExpectedAllowed || item.ProcessId == target!.ProcessId)
+                && (!request.ExpectedAllowed || (item.ProcessId > 0 && item.ProcessId == target!.ProcessId))
                 && item.TimeCreatedUtc >= request.StartedAtUtc && item.TimeCreatedUtc <= now);
 
             static bool RuleMatches(string actual, string expected)

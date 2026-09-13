@@ -16,8 +16,9 @@ namespace Guard.WindowsPoc.Native
             state.Revalidate();
             PocConfiguration config = configuration.Value;
             if (!state.IsBoundTo(capability) || !store.Owns(state) || await store.ReadAsync(token).ConfigureAwait(false) != journal
+                || fixtures.ClosureManifestHash is null || fixtures.ClosureOwnerSid != config.OwnerSid
                 || journal.RecoveryLease != PolicyMutationDecision.Hash(config.Nonce)
-                || journal.OwnershipEvidence != PolicyMutationDecision.Hash(config.OwnerSid + fixtures.TargetSha256 + fixtures.ControlSha256)
+                || journal.OwnershipEvidence != PolicyMutationDecision.Hash(config.OwnerSid + fixtures.TargetSha256 + fixtures.ControlSha256 + fixtures.ClosureManifestHash)
                 || await store.ReadRecoveryBarrierAsync(token).ConfigureAwait(false) != PocRecoveryBarrier.ValidationComplete)
             { throw new InvalidOperationException("Native authority scope refused."); }
             await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.Capture, token).ConfigureAwait(false);
@@ -40,9 +41,10 @@ namespace Guard.WindowsPoc.Native
             {
                 if (stage is null) { throw new InvalidOperationException("Exact compiler transition required."); }
                 PolicyMutationGuard guard = new(stage.Preview, config.OwnerSid, fixtures.TargetPath, fixtures.TargetSha256, TimeProvider.System);
-                if (current.IsEmpty && !guard.Evaluate(attestation, snapshot, true).Allowed)
-                { throw new InvalidOperationException("Initial policy guard refused."); }
-                decision = guard.EvaluateTransition(attestation, snapshot, true, journal);
+                decision = current.IsEmpty
+                    ? guard.EvaluateInitial(attestation, snapshot, true, journal,
+                        await PocDurableBaselineProof.CreateAsync(capability, state, store, journal, snapshot, token).ConfigureAwait(false))
+                    : guard.EvaluateTransition(attestation, snapshot, true, journal);
                 if (!decision.Allowed) { throw new InvalidOperationException("Transition policy guard refused."); }
             }
             PocFixtureLease lease = PocFixtureLease.Open(fixtures with { InventoryRevision = snapshot.Revision });

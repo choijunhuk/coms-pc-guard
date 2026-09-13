@@ -37,6 +37,14 @@ namespace Guard.WindowsPoc.Safety
         private readonly TimeProvider _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         public string FixturePath { get; } = fixturePath;
 
+        internal PolicyMutationDecision EvaluateInitial(VmAttestationResult attestation, AppLockerNativeSnapshot snapshot,
+            bool elevated, PocTransactionJournal journal, PocDurableBaselineProof? proof)
+        {
+            PolicyMutationDecision transition = EvaluateTransition(attestation, snapshot, elevated, journal);
+            return proof is not null && proof.OwnerSid == ownerSid && proof.Authorizes(snapshot, journal)
+                ? transition : new(false, journal.After.LocalPolicyXml, FixturePath, fixtureHash, snapshot.Revision);
+        }
+
         internal PolicyMutationDecision EvaluateTransition(VmAttestationResult attestation, AppLockerNativeSnapshot snapshot,
             bool elevated, PocTransactionJournal journal)
         {

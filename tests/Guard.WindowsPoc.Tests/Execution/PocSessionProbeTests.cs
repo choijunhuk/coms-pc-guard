@@ -41,6 +41,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             PocProbeMarker control = new(run, request.TokenSid, @"C:\ComsPcGuardPoc\Fixtures\control.exe", start.AddSeconds(1)) { SessionId = 1, Interactive = true, ProcessId = 42 };
             PocProbeEvent denied = new(request.TokenSid, request.TargetPath, "rule-1", 8004, start.AddSeconds(1)) { ProcessId = 43 };
             Assert.IsTrue(PocProbeEvidence.Validate(request, control, null, [denied], start.AddSeconds(2)));
+            Assert.IsFalse(PocProbeEvidence.ValidateBroker(request, control, null, [denied], start.AddSeconds(2), null));
             Assert.IsFalse(PocProbeEvidence.Validate(request, control with { RunId = Guid.NewGuid() }, null, [denied], start.AddSeconds(2)));
             Assert.IsFalse(PocProbeEvidence.Validate(request, control with { StartedAtUtc = start.AddSeconds(-1) }, null, [denied], start.AddSeconds(2)));
             Assert.IsFalse(PocProbeEvidence.Validate(request, control with { TokenSid = "S-1-5-18" }, null, [denied], start.AddSeconds(2)));

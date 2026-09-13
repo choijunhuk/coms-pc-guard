@@ -48,7 +48,6 @@ namespace Guard.WindowsPoc.Execution
                     token.ThrowIfCancellationRequested();
                     AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !fresh.SamePolicy(expected)) { drift = true; break; }
-                    await store.SetRecoveryBarrierAsync(false, token).ConfigureAwait(false);
                     PocTransactionJournal journal = PocTransactionJournal.Prepare(baseline, fresh, after, ownershipEvidence, recoveryLease, clock.GetUtcNow());
                     await store.SaveAsync(journal, token).ConfigureAwait(false);
                     journal = journal.WithPhase(PocJournalPhase.WritePending);
@@ -95,7 +94,6 @@ namespace Guard.WindowsPoc.Execution
                 AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                 if (!fresh.IsReady(clock.GetUtcNow()) || !journal.Recognizes(fresh))
                 { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
-                await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                 if (!fresh.SamePolicy(journal.InitialBaseline))
                 {
                     // Re-read immediately before preparing the cleanup OS write. Gateway must repeat this
@@ -103,7 +101,6 @@ namespace Guard.WindowsPoc.Execution
                     fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                     if (!fresh.IsReady(clock.GetUtcNow()) || !journal.Recognizes(fresh))
                     { await MarkHostRecoveryAsync().ConfigureAwait(false); return PocRunResult.HostCloneRecoveryRequired; }
-                    await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                     if (!fresh.SamePolicy(journal.InitialBaseline))
                     {
                         PocTransactionJournal restore = PocTransactionJournal.Prepare(journal.InitialBaseline, fresh,
@@ -119,6 +116,7 @@ namespace Guard.WindowsPoc.Execution
                         journal = restore;
                     }
                 }
+                await store.SetRecoveryBarrierAsync(false, cleanup.Token).ConfigureAwait(false);
                 await store.SaveAsync(journal.WithPhase(PocJournalPhase.Recovered), cleanup.Token).ConfigureAwait(false);
                 return PocRunResult.Success;
             }
@@ -132,7 +130,9 @@ namespace Guard.WindowsPoc.Execution
             using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
             try
             {
-                await store.SetHostRecoveryRequiredAsync(timeout.Token).ConfigureAwait(false);
+                try { await store.SetHostRecoveryRequiredAsync(timeout.Token).ConfigureAwait(false); }
+                catch (Exception exception) when (Recoverable(exception))
+                { await store.SetRecoveryBarrierAsync(true, timeout.Token).ConfigureAwait(false); }
                 PocTransactionJournal? journal = await store.ReadAsync(timeout.Token).ConfigureAwait(false);
                 if (journal is not null)
                 { await store.SaveAsync(journal.WithPhase(PocJournalPhase.HostCloneRecoveryRequired), timeout.Token).ConfigureAwait(false); }

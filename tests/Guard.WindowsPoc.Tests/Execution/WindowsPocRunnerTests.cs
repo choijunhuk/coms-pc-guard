@@ -36,9 +36,9 @@ namespace Guard.WindowsPoc.Tests.Execution
             ScriptedGateway gateway = new() { FailWrite = failedWrite, FailAfterMutation = afterMutation };
             MemoryJournal store = new();
             PocRunResult result = await Runner(gateway, store).RunAsync([First, Second]);
-            Assert.AreEqual(PocRunResult.ProbeFailed, result);
-            Assert.AreEqual(Empty, gateway.Current);
-            Assert.AreEqual(failedWrite == 1 && !afterMutation ? 0 : 1, gateway.RestoreWrites);
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, result);
+            Assert.AreEqual(afterMutation ? (failedWrite == 1 ? First : Second) : (failedWrite == 1 ? Empty : First), gateway.Current);
+            Assert.AreEqual(0, gateway.RestoreWrites);
         }
 
         [TestMethod]
@@ -107,7 +107,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             ScriptedGateway gateway = new();
             MemoryJournal store = new() { FailPending = true };
-            Assert.AreEqual(PocRunResult.ProbeFailed, await Runner(gateway, store).RunAsync([First]));
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RunAsync([First]));
             Assert.AreEqual(0, gateway.Writes.Count);
         }
 
@@ -146,6 +146,22 @@ namespace Guard.WindowsPoc.Tests.Execution
             Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
             Assert.IsTrue(store.HostRecoveryLatch);
             Assert.AreEqual(PocJournalPhase.WritePending, store.Value.Phase);
+            gateway.Current = Empty;
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(1, gateway.RestoreWrites);
+        }
+
+        [TestMethod]
+        public async Task NativeScriptDriftLatchAppendFailureStillLeavesRestartFailClosed()
+        {
+            ScriptedGateway gateway = new() { DriftDuringRestore = true, Current = First };
+            MemoryJournal store = new()
+            {
+                FailHostRecoveryLatch = true,
+                Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.Mutated)
+            };
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.IsTrue(store.RecoveryBarrier, "A failed DRIFT latch append must leave a durable barrier armed.");
             gateway.Current = Empty;
             Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
             Assert.AreEqual(1, gateway.RestoreWrites);
@@ -226,10 +242,9 @@ namespace Guard.WindowsPoc.Tests.Execution
                     Assert.IsTrue(recovered.After.SamePolicy(Empty));
                     gateway.Store = disk;
                     WindowsPocRunner runner = new(gateway, disk, new TestGate(), new FixedClock(), "owner-proof", "lease", _ => Task.CompletedTask);
-                    Assert.AreEqual(PocRunResult.Success, await runner.RecoverAsync());
-                    Assert.AreEqual(PocRunResult.Success, await runner.RecoverAsync());
-                    Assert.AreEqual(1, gateway.RestoreWrites);
-                    Assert.IsTrue(gateway.Current.SamePolicy(Empty));
+                    Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RecoverAsync());
+                    Assert.AreEqual(0, gateway.RestoreWrites);
+                    Assert.IsTrue(gateway.Current.SamePolicy(First));
                 }
             }
             finally { File.Delete(path); }
@@ -299,6 +314,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             public PocTransactionJournal? Value { get; set; }
             public bool FailPending { get; set; }
             public bool FailHostRecovery { get; set; }
+            public bool FailHostRecoveryLatch { get; set; }
             public bool FailBarrierWrites { get; set; }
             public bool RecoveryBarrier { get; set; }
             public bool HostRecoveryLatch { get; set; }
@@ -309,6 +325,7 @@ namespace Guard.WindowsPoc.Tests.Execution
 
             public Task SetHostRecoveryRequiredAsync(CancellationToken token)
             {
+                if (FailHostRecoveryLatch) { throw new IOException("host latch append failed"); }
                 HostRecoveryLatch = true;
                 return Task.CompletedTask;
             }

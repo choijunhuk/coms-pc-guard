@@ -10,6 +10,15 @@ namespace Guard.WindowsPoc.Native
     {
         public string LocalPolicyXml { get; init => field = Canonicalize(value); } = Canonicalize(LocalPolicyXml);
         public string EffectivePolicyXml { get; init => field = Canonicalize(value); } = Canonicalize(EffectivePolicyXml);
+        public string? NativeRevision
+        {
+            get;
+            init
+            {
+                if (value is not null && string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException("Native inventory unavailable."); }
+                field = value;
+            }
+        }
         public string? RawLocalPolicySha256
         {
             get;

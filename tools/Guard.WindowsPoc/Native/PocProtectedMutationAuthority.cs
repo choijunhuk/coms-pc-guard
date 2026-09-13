@@ -11,25 +11,21 @@ namespace Guard.WindowsPoc.Native
         private readonly PolicyMutationDecision _decision;
         private readonly VmAttestationResult _attestation;
         private readonly bool _elevated;
-        private readonly string _fixturePath;
-        private readonly string _fixtureHash;
+        private readonly PocFixtureLease _fixtureLease;
         private readonly TimeProvider _clock;
 
         internal PocProtectedMutationAuthority(OwnerTokenPolicyGateCapability gateCapability, WindowsPocStateLease stateLease,
             DurablePocJournalStore journalStore, PolicyMutationDecision decision, VmAttestationResult attestation, bool elevated,
-            string fixturePath, string fixtureHash, TimeProvider clock)
+            PocFixtureLease fixtureLease, TimeProvider clock)
         {
             _gateCapability = gateCapability ?? throw new ArgumentNullException(nameof(gateCapability));
             _stateLease = stateLease ?? throw new ArgumentNullException(nameof(stateLease));
             _journalStore = journalStore ?? throw new ArgumentNullException(nameof(journalStore));
             _decision = decision ?? throw new ArgumentNullException(nameof(decision));
             _attestation = attestation ?? throw new ArgumentNullException(nameof(attestation));
+            _fixtureLease = fixtureLease ?? throw new ArgumentNullException(nameof(fixtureLease));
             ArgumentNullException.ThrowIfNull(clock);
-            ArgumentException.ThrowIfNullOrWhiteSpace(fixturePath);
-            ArgumentException.ThrowIfNullOrWhiteSpace(fixtureHash);
             _elevated = elevated;
-            _fixturePath = fixturePath;
-            _fixtureHash = fixtureHash;
             _clock = clock;
         }
 
@@ -41,10 +37,15 @@ namespace Guard.WindowsPoc.Native
             CrossProcessPolicyGate.RequireHeld(_gateCapability);
             _stateLease.Revalidate();
             PocTransactionJournal? durable = await _journalStore.ReadAsync(token).ConfigureAwait(false);
+            bool hostRecovery = await _journalStore.HasHostRecoveryRequiredAsync(token).ConfigureAwait(false);
+            bool recoveryBarrier = await _journalStore.HasRecoveryBarrierAsync(token).ConfigureAwait(false);
+            bool writePendingProof = await _journalStore.HasPreparedWritePendingProofAsync(journal, token).ConfigureAwait(false);
             _stateLease.Revalidate();
             if (durable != journal || journal.Phase != PocJournalPhase.WritePending
                 || trustedCurrent.RawLocalPolicySha256 is null || !trustedCurrent.IsReady(_clock.GetUtcNow())
-                || !_attestation.Attested || !_attestation.AllowWrite || !_elevated)
+                || hostRecovery || !recoveryBarrier || !writePendingProof
+                || !_attestation.Attested || !_attestation.AllowWrite || !_elevated
+                || trustedCurrent.NativeRevision != _decision.InventoryRevision)
             {
                 throw new InvalidOperationException("Protected mutation authorization refused.");
             }
@@ -53,13 +54,15 @@ namespace Guard.WindowsPoc.Native
             {
                 _ = journal.Recognizes(trustedCurrent) && !trustedCurrent.SamePolicy(journal.InitialBaseline)
                     ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
+                _fixtureLease.Revalidate(_decision);
                 return new PocMutationAuthorization(journal, Restore: true, trustedCurrent.RawLocalPolicySha256,
                     PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml);
             }
 
             _ = trustedCurrent.SamePolicy(journal.Before) && _decision.Allowed
-                && _decision.Authorizes(journal.After.LocalPolicyXml, _fixturePath, _fixtureHash)
+                && _decision.Authorizes(journal.After.LocalPolicyXml, _decision.FixturePath, _decision.FixtureHash)
                 ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
+            _fixtureLease.Revalidate(_decision);
 
             return new PocMutationAuthorization(journal, Restore: false, trustedCurrent.RawLocalPolicySha256,
                 PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml);

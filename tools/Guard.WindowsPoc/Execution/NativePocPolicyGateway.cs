@@ -45,7 +45,7 @@ namespace Guard.WindowsPoc.Execution
             PolicyPresence wdac = snapshot.Inventory.Wdac;
             return new(snapshot.CapturedAtUtc, snapshot.LocalPolicyXml, snapshot.EffectivePolicyXml!,
                 csp, wdac, snapshot.AppIdServiceRunning, snapshot.AppIdServiceAutomatic)
-            { RawLocalPolicySha256 = snapshot.RawLocalPolicySha256 };
+            { NativeRevision = snapshot.Revision, RawLocalPolicySha256 = snapshot.RawLocalPolicySha256 };
         }
     }
 }

@@ -47,6 +47,39 @@ namespace Guard.WindowsPoc.Recovery
             return journal;
         }
 
+        internal async Task<bool> HasPreparedWritePendingProofAsync(PocTransactionJournal journal, CancellationToken token)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            _lease?.Revalidate();
+            if (file.Length > MaximumBytes) { throw new InvalidOperationException("Journal size limit exceeded."); }
+            file.Position = 0;
+            byte[] bytes = new byte[(int)file.Length];
+            await file.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+            _lease?.Revalidate();
+            if (bytes.Length > 0 && bytes[^1] != '\n') { throw new InvalidOperationException("Incomplete journal requires host recovery."); }
+            string hash = "";
+            bool prepared = false;
+            try
+            {
+                foreach (string line in Encoding.UTF8.GetString(bytes).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    Envelope envelope = JsonSerializer.Deserialize<Envelope>(line) ?? throw new InvalidOperationException("Invalid journal.");
+                    if (envelope.PreviousHash != hash || envelope.Hash != PolicyMutationDecision.Hash(hash + envelope.Payload))
+                    { throw new InvalidOperationException("Journal integrity failure."); }
+                    LogRecord record = JsonSerializer.Deserialize<LogRecord>(envelope.Payload) ?? throw new InvalidOperationException("Invalid journal.");
+                    hash = envelope.Hash;
+                    if (record.Journal is null) { continue; }
+                    Entry entry = record.Journal;
+                    PocTransactionJournal logged = PocTransactionJournal.Prepare(entry.InitialBaseline, entry.Before, entry.After,
+                        entry.OwnershipEvidence, entry.RecoveryLease, entry.PreparedAtUtc).WithPhase(entry.Phase);
+                    if (logged == journal.WithPhase(PocJournalPhase.Prepared)) { prepared = true; }
+                    if (logged == journal) { return prepared; }
+                }
+            }
+            catch (JsonException) { throw new InvalidOperationException("Invalid journal."); }
+            return false;
+        }
+
         public async Task SaveAsync(PocTransactionJournal journal, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);

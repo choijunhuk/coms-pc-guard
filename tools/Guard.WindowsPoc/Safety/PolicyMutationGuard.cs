@@ -10,12 +10,13 @@ namespace Guard.WindowsPoc.Safety
 {
     public sealed record PolicyMutationDecision
     {
-        internal PolicyMutationDecision(bool allowed, string xml, string fixturePath, string fixtureHash)
-        { Allowed = allowed; XmlHash = Hash(xml); FixturePath = fixturePath; FixtureHash = fixtureHash; }
+        internal PolicyMutationDecision(bool allowed, string xml, string fixturePath, string fixtureHash, string inventoryRevision = "")
+        { Allowed = allowed; XmlHash = Hash(xml); FixturePath = fixturePath; FixtureHash = fixtureHash; InventoryRevision = inventoryRevision; }
         public bool Allowed { get; }
         public string XmlHash { get; }
         public string FixturePath { get; }
         public string FixtureHash { get; }
+        internal string InventoryRevision { get; }
         public bool Authorizes(string xml, string fixturePath, string fixtureHash)
         {
             return Allowed
@@ -48,7 +49,7 @@ namespace Guard.WindowsPoc.Safety
                 && _preview.DesiredOwnedRules.All(rule => rule.Action != AppLockerRuleAction.Deny
                     || (rule.Sid != ownerSid && rule.Sid is not "S-1-1-0" and not "S-1-5-32-544"));
             string xml = _preview.IsCompleteStandalonePolicy ? new AppLockerPolicyXmlWriter().Write(_preview) : "";
-            return new(allowed, xml, FixturePath, fixtureHash);
+            return new(allowed, xml, FixturePath, fixtureHash, _preview.InventoryRevision);
         }
 
         private static bool ValidFixturePath(string path)

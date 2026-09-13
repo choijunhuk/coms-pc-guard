@@ -18,3 +18,25 @@
 
 - The disposable VM must contain the fixed protected input `C:\ProgramData\ComsPcGuardPoc\member-sids.json` with `MemberASid` and `MemberBSid` before first provisioning; values are neither accepted as parameters nor logged.
 - Run the blocked .NET gates and the Windows-only acceptance flow in the designated disposable VM with SDK 10.0.401.
+
+## Fix round 1
+
+### RED
+
+- `WindowsProvisioningScriptTests` was extended for PS 5.1 compatibility and the protected deployment/watchdog contract. Focused execution failed as expected because `Assert-ExistingDeployment`, retained-handle final-path validation, VM binding, and complete watchdog validation were absent.
+
+### Changes
+
+- Removed the PowerShell 7 ternary and `Path.GetRelativePath`; directory creation now uses the Windows PowerShell 5.1 `New-Item -Path` parameter set and a prefix-checked relative-path helper.
+- Added retained, bounded fixed-input reads with `FileShare.Read`, before/after hashes, reparse/final-path checks, a VM binding gate, complete watchdog validation for both provision and cleanup, and a proof-only existing-deployment path before any publish/sign/delete work. `-WhatIf` returns before all mutation paths.
+- Tightened existing certificate acceptance to the fixed non-exportable 3072-bit RSA provider and a total validity window of at most seven days.
+
+### Commands/results
+
+- PASS: `/Users/choi/.dotnet/dotnet test tests/Guard.WindowsPoc.Tests/Guard.WindowsPoc.Tests.csproj --no-restore --filter FullyQualifiedName~WindowsProvisioningScriptTests` (3/3).
+- PASS: `/Users/choi/.dotnet/dotnet restore ComsPcGuard.sln --locked-mode`.
+- PASS: `/Users/choi/.dotnet/dotnet format ComsPcGuard.sln --verify-no-changes`.
+- PASS: `/Users/choi/.dotnet/dotnet build ComsPcGuard.sln -c Release --no-restore` (0 warnings, 0 errors).
+- PASS: default and `TZ=UTC` Release suites: Core 117, Service 148, Windows PoC 206 passed; two Windows-only native tests skipped in each run.
+- PASS: PowerShell AST parse and `git diff --check`.
+- NOT_RUN_WINDOWS_ONLY: WindowsPowerShell 5.1 execution, certificate/store, Authenticode/AppLocker, ACL, scheduled-task, and VM-native attestation acceptance.

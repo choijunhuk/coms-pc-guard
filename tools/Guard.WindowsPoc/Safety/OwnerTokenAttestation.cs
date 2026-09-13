@@ -180,7 +180,9 @@ namespace Guard.WindowsPoc.Safety
                 && marker.AclKnown && marker.ProtectedAcl
                 && app.AclKnown && app.ProtectedAcl
                 && parents.All(parent => parent.AclKnown)
-                && !paths.Any(path => path.ReparsePoint || path.UntrustedWrite || path.UntrustedReplacement);
+                && !paths.Any(path => path.ReparsePoint || path.UntrustedReplacement)
+                && !marker.UntrustedWrite
+                && !app.UntrustedWrite;
         }
 
         internal static OwnerTokenPathEvidence ClassifyPathEvidence(string role, string? owner, bool protectedAcl, bool reparsePoint,

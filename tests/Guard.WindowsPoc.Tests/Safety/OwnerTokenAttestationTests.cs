@@ -179,6 +179,36 @@ namespace Guard.WindowsPoc.Tests.Safety
             Assert.IsTrue(OwnerTokenAttestation.ValidateVmMarkerBoundary(Owner, ownerOrSystemMarker));
         }
 
+        [TestMethod]
+        public void VmMarkerAllowsGlobalParentCreateOnlyButRejectsMarkerCreateOnly()
+        {
+            const int createOnly = 0x2 | 0x4;
+            OwnerTokenPathEvidence parent = OwnerTokenAttestation.ClassifyPathEvidence(OwnerTokenPathEvidence.GlobalParentRole,
+                "S-1-5-32-544", protectedAcl: false, reparsePoint: false,
+                [new("S-1-5-32-545", createOnly, Allow: true, InheritOnly: false, Callback: false)], Owner);
+            Assert.IsTrue(parent.UntrustedWrite);
+            Assert.IsFalse(parent.UntrustedReplacement);
+
+            OwnerTokenPathEvidence marker = OwnerTokenAttestation.ClassifyPathEvidence(OwnerTokenPathEvidence.ProofFileRole,
+                SystemSid, protectedAcl: true, reparsePoint: false,
+                [new("S-1-5-32-545", createOnly, Allow: true, InheritOnly: false, Callback: false)], Owner);
+            Assert.IsTrue(marker.UntrustedWrite);
+            Assert.IsFalse(marker.UntrustedReplacement);
+
+            Assert.IsTrue(OwnerTokenAttestation.ValidateVmMarkerBoundary(Owner,
+            [
+                parent,
+                OwnerTokenPathEvidence.ApplicationDirectory(Owner, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ProofFile(SystemSid, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false)
+            ]));
+            Assert.IsFalse(OwnerTokenAttestation.ValidateVmMarkerBoundary(Owner,
+            [
+                OwnerTokenPathEvidence.GlobalParent("S-1-5-32-544", aclKnown: true, reparsePoint: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ApplicationDirectory(Owner, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false),
+                marker
+            ]));
+        }
+
         private static OwnerTokenPolicyGateCapability CapabilityForTest(string ownerSid, string nonce, string vmName,
             string vmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
         {

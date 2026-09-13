@@ -159,6 +159,26 @@ namespace Guard.WindowsPoc.Tests.Safety
                 () => new(SystemSid, false, true, ValidProof())));
         }
 
+        [TestMethod]
+        public void VmMarkerRejectsMemberOwnedProtectedSystemWritableFile()
+        {
+            OwnerTokenPathEvidence[] memberOwnedMarker =
+            [
+                OwnerTokenPathEvidence.GlobalParent("S-1-5-32-544", aclKnown: true, reparsePoint: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ApplicationDirectory(Owner, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ProofFile(Member, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false)
+            ];
+            Assert.IsFalse(OwnerTokenAttestation.ValidateVmMarkerBoundary(Owner, memberOwnedMarker));
+
+            OwnerTokenPathEvidence[] ownerOrSystemMarker =
+            [
+                OwnerTokenPathEvidence.GlobalParent("S-1-5-32-544", aclKnown: true, reparsePoint: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ApplicationDirectory(Owner, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false),
+                OwnerTokenPathEvidence.ProofFile(SystemSid, aclKnown: true, protectedAcl: true, reparsePoint: false, untrustedWrite: false, untrustedReplacement: false)
+            ];
+            Assert.IsTrue(OwnerTokenAttestation.ValidateVmMarkerBoundary(Owner, ownerOrSystemMarker));
+        }
+
         private static OwnerTokenPolicyGateCapability CapabilityForTest(string ownerSid, string nonce, string vmName,
             string vmIdentityHash, Func<OwnerTokenAttestationContext> readContext)
         {

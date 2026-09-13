@@ -109,7 +109,7 @@ namespace Guard.WindowsPoc.Safety
         [SupportedOSPlatform("windows")]
         internal static OwnerTokenPolicyGateCapability CreateNative(string ownerSid, string expectedNonce, string expectedVmName, bool elevated)
         {
-            OwnerTokenNativeVmBinding binding = OwnerTokenAttestation.ReadNativeVmBinding(expectedNonce, expectedVmName);
+            OwnerTokenNativeVmBinding binding = OwnerTokenAttestation.ReadNativeVmBinding(ownerSid, expectedNonce, expectedVmName);
             OwnerTokenPolicyGateCapability capability = new(ownerSid, expectedNonce, expectedVmName, binding.VmIdentityHash,
                 () => OwnerTokenAttestation.ReadNativeContext(ownerSid, expectedNonce, expectedVmName, elevated));
             _ = capability.Revalidate();
@@ -167,6 +167,22 @@ namespace Guard.WindowsPoc.Safety
                 proof?.Owner, aclVerified, reparse, untrustedWrite, untrustedReplacement);
         }
 
+        internal static bool ValidateVmMarkerBoundary(string ownerSid, IReadOnlyList<OwnerTokenPathEvidence> paths)
+        {
+            ArgumentNullException.ThrowIfNull(paths);
+            OwnerTokenPathEvidence? marker = paths.SingleOrDefault(path => path.Role == OwnerTokenPathEvidence.ProofFileRole);
+            OwnerTokenPathEvidence? app = paths.SingleOrDefault(path => path.Role == OwnerTokenPathEvidence.ApplicationDirectoryRole);
+            OwnerTokenPathEvidence[] parents = [.. paths.Where(path => path.Role == OwnerTokenPathEvidence.GlobalParentRole)];
+            return marker is not null && app is not null && parents.Length > 0
+                && TrustedProtectedBoundaryOwner(marker.Owner, ownerSid)
+                && TrustedProtectedBoundaryOwner(app.Owner, ownerSid)
+                && parents.All(parent => TrustedGlobalParentOwner(parent.Owner))
+                && marker.AclKnown && marker.ProtectedAcl
+                && app.AclKnown && app.ProtectedAcl
+                && parents.All(parent => parent.AclKnown)
+                && !paths.Any(path => path.ReparsePoint || path.UntrustedWrite || path.UntrustedReplacement);
+        }
+
         internal static OwnerTokenPathEvidence ClassifyPathEvidence(string role, string? owner, bool protectedAcl, bool reparsePoint,
             IReadOnlyList<OwnerTokenAceEvidence> aces, string ownerSid)
         {
@@ -214,7 +230,7 @@ namespace Guard.WindowsPoc.Safety
         internal static OwnerTokenAttestationProof ProvisionForNativeOwner(string ownerSid, string nonce, string expectedVmName)
         {
             ValidateNativeOwnerProcess(ownerSid);
-            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(nonce, expectedVmName);
+            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(ownerSid, nonce, expectedVmName);
             OwnerTokenAttestationProof proof = CreateProof(ownerSid, nonce, expectedVmName, binding.VmIdentityHash);
             EnsureApplicationDirectory(ownerSid);
             if (File.Exists(ProofPath))
@@ -244,29 +260,35 @@ namespace Guard.WindowsPoc.Safety
         [SupportedOSPlatform("windows")]
         internal static OwnerTokenAttestationContext ReadNativeContext(string ownerSid, string expectedNonce, string expectedVmName, bool elevated)
         {
-            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(expectedNonce, expectedVmName);
+            OwnerTokenNativeVmBinding binding = ReadNativeVmBinding(ownerSid, expectedNonce, expectedVmName);
             OwnerTokenAttestationProof? proof = File.Exists(ProofPath) ? ReadNativeProof(ownerSid) : null;
             _ = proof is null || proof.VmIdentityHash == binding.VmIdentityHash ? true : throw Refused();
             return new(ReadProcessSid(), IsImpersonating(), elevated, proof);
         }
 
         [SupportedOSPlatform("windows")]
-        internal static OwnerTokenNativeVmBinding ReadNativeVmBinding(string expectedNonce, string expectedVmName)
+        internal static OwnerTokenNativeVmBinding ReadNativeVmBinding(string ownerSid, string expectedNonce, string expectedVmName)
         {
+            CrossProcessPolicyGate.ValidateOwner(ownerSid);
             string currentHash = CaptureCurrentVmIdentityHash();
-            NativeVmMarker marker = ReadNativeVmMarker();
+            NativeVmMarker marker = ReadNativeVmMarker(ownerSid);
             return marker.Nonce == expectedNonce && marker.ExpectedVmName == expectedVmName && marker.VmIdentityHash == currentHash
                 ? new(marker.Nonce, marker.ExpectedVmName, marker.VmIdentityHash) : throw Refused();
         }
 
         [SupportedOSPlatform("windows")]
-        private static NativeVmMarker ReadNativeVmMarker()
+        private static NativeVmMarker ReadNativeVmMarker(string ownerSid)
         {
             using FileStream file = new(VmMarkerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
             VmMarkerEnvelope envelope = JsonSerializer.Deserialize<VmMarkerEnvelope>(file) ?? throw Refused();
             _ = envelope.Version == CurrentVersion ? true : throw Refused();
-            OwnerTokenPathEvidence marker = ReadProtection(file, OwnerTokenPathEvidence.ProofFileRole, LocalSystemSid);
-            _ = marker.AclKnown && marker.ProtectedAcl && !marker.ReparsePoint && !marker.UntrustedWrite && !marker.UntrustedReplacement ? true : throw Refused();
+            OwnerTokenPathEvidence[] paths =
+            [
+                .. GlobalParents.Select(path => ReadProtection(new DirectoryInfo(path), OwnerTokenPathEvidence.GlobalParentRole, ownerSid)),
+                ReadProtection(new DirectoryInfo(ApplicationRoot), OwnerTokenPathEvidence.ApplicationDirectoryRole, ownerSid),
+                ReadProtection(file, OwnerTokenPathEvidence.ProofFileRole, ownerSid)
+            ];
+            _ = ValidateVmMarkerBoundary(ownerSid, paths) ? true : throw Refused();
 
             return new(envelope.Nonce, envelope.ExpectedVmName, envelope.VmIdentityHash);
         }

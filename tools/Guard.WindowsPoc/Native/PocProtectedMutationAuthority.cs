@@ -39,12 +39,12 @@ namespace Guard.WindowsPoc.Native
             _stateLease.Revalidate();
             PocTransactionJournal? durable = await _journalStore.ReadAsync(token).ConfigureAwait(false);
             bool hostRecovery = await _journalStore.HasHostRecoveryRequiredAsync(token).ConfigureAwait(false);
-            bool recoveryBarrier = await _journalStore.HasRecoveryBarrierAsync(token).ConfigureAwait(false);
+            PocRecoveryBarrier recoveryBarrier = await _journalStore.ReadRecoveryBarrierAsync(token).ConfigureAwait(false);
             bool writePendingProof = await _journalStore.HasPreparedWritePendingProofAsync(journal, token).ConfigureAwait(false);
             _stateLease.Revalidate();
             if (durable != journal || journal.Phase != PocJournalPhase.WritePending
                 || trustedCurrent.RawLocalPolicySha256 is null || !trustedCurrent.IsReady(_clock.GetUtcNow())
-                || hostRecovery || !recoveryBarrier || !writePendingProof
+                || hostRecovery || recoveryBarrier != PocRecoveryBarrier.ValidationComplete || !writePendingProof
                 || !_attestation.Attested || !_attestation.AllowWrite || !_elevated
                 || (!restore && trustedCurrent.NativeRevision != _decision.InventoryRevision))
             {

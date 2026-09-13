@@ -19,6 +19,7 @@ namespace Guard.WindowsPoc.Tests.Execution
                 {
                     DurablePocJournalStore store = new(file);
                     Assert.IsTrue(await store.HasRecoveryBarrierAsync(CancellationToken.None));
+                    Assert.AreEqual(PocRecoveryBarrier.UnknownFailClosed, await store.ReadRecoveryBarrierAsync(CancellationToken.None));
                     Assert.IsNull(await store.ReadAsync(CancellationToken.None));
                 }
             }

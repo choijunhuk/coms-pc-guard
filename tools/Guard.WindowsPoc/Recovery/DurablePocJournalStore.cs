@@ -47,7 +47,7 @@ namespace Guard.WindowsPoc.Recovery
 
         public async Task SetRecoveryBarrierAsync(bool required, CancellationToken token)
         {
-            await SetRecoveryBarrierAsync(required ? PocRecoveryBarrier.Capture : PocRecoveryBarrier.None, token).ConfigureAwait(false);
+            await SetRecoveryBarrierAsync(required ? PocRecoveryBarrier.UnknownFailClosed : PocRecoveryBarrier.None, token).ConfigureAwait(false);
         }
 
         public async Task SetRecoveryBarrierAsync(PocRecoveryBarrier barrier, CancellationToken token)
@@ -145,7 +145,7 @@ namespace Guard.WindowsPoc.Recovery
                     if (record.RecoveryBarrier is bool required && record.Journal is null && record.HostRecoveryRequired is null)
                     {
                         if (record.RecoveryBarrierKind is { } kind && !Enum.IsDefined(kind)) { throw new InvalidOperationException("Invalid journal."); }
-                        recoveryBarrier = required ? record.RecoveryBarrierKind ?? PocRecoveryBarrier.Capture : PocRecoveryBarrier.None;
+                        recoveryBarrier = required ? record.RecoveryBarrierKind ?? PocRecoveryBarrier.UnknownFailClosed : PocRecoveryBarrier.None;
                         continue;
                     }
                     Entry entry = record.Journal ?? throw new InvalidOperationException("Invalid journal.");

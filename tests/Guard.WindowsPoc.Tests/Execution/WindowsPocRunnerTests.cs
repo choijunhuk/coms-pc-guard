@@ -124,7 +124,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
-        public async Task RecoveryBarrierWithRecognizedMutatedJournalStillRestoresInitialBaseline()
+        public async Task IncompleteCaptureBarrierWithRecognizedMutatedJournalStillRequiresHostRecovery()
         {
             ScriptedGateway gateway = new() { Current = First };
             MemoryJournal store = new()
@@ -133,22 +133,20 @@ namespace Guard.WindowsPoc.Tests.Execution
                 RecoveryBarrierKind = PocRecoveryBarrier.Capture,
                 Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.Mutated)
             };
-            Assert.AreEqual(PocRunResult.Success, await Runner(gateway, store).RecoverAsync());
-            Assert.AreEqual(Empty, gateway.Current);
-            Assert.AreEqual(1, gateway.RestoreWrites);
-            Assert.IsFalse(store.RecoveryBarrier);
-            PocTransactionJournal journal = store.Value ?? throw new AssertFailedException("Journal was not saved.");
-            Assert.AreEqual(PocJournalPhase.Recovered, journal.Phase);
+            Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(First, gateway.Current);
+            Assert.AreEqual(0, gateway.RestoreWrites);
+            Assert.IsTrue(store.RecoveryBarrier);
         }
 
         [TestMethod]
-        public async Task RecoveryBarrierWithExactWritePendingCurrentStillRestoresInitialBaseline()
+        public async Task ValidationCompleteBarrierWithExactWritePendingCurrentRestoresInitialBaseline()
         {
             ScriptedGateway gateway = new() { Current = First };
             MemoryJournal store = new()
             {
                 RecoveryBarrier = true,
-                RecoveryBarrierKind = PocRecoveryBarrier.Capture,
+                RecoveryBarrierKind = PocRecoveryBarrier.ValidationComplete,
                 Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.WritePending)
             };
             Assert.AreEqual(PocRunResult.Success, await Runner(gateway, store).RecoverAsync());
@@ -388,7 +386,7 @@ namespace Guard.WindowsPoc.Tests.Execution
 
             public Task SetRecoveryBarrierAsync(bool required, CancellationToken token)
             {
-                return SetRecoveryBarrierAsync(required ? PocRecoveryBarrier.Capture : PocRecoveryBarrier.None, token);
+                return SetRecoveryBarrierAsync(required ? PocRecoveryBarrier.UnknownFailClosed : PocRecoveryBarrier.None, token);
             }
 
             public Task SetRecoveryBarrierAsync(PocRecoveryBarrier barrier, CancellationToken token)

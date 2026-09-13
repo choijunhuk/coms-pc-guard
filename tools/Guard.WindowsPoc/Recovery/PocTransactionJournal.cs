@@ -3,7 +3,7 @@ using Guard.WindowsPoc.Native;
 namespace Guard.WindowsPoc.Recovery
 {
     internal enum PocJournalPhase { Prepared, WritePending, Mutated, Recovered, HostCloneRecoveryRequired }
-    internal enum PocRecoveryBarrier { None, Capture, Drift }
+    internal enum PocRecoveryBarrier { None, Capture, ValidationComplete, Drift, UnknownFailClosed }
 
     // Internal pending native trust integration: caller-supplied journal data is never mutation authority.
     internal sealed record PocTransactionJournal
@@ -56,7 +56,7 @@ namespace Guard.WindowsPoc.Recovery
         Task SetRecoveryBarrierAsync(bool required, CancellationToken token);
         async Task<PocRecoveryBarrier> ReadRecoveryBarrierAsync(CancellationToken token)
         {
-            return await HasRecoveryBarrierAsync(token).ConfigureAwait(false) ? PocRecoveryBarrier.Capture : PocRecoveryBarrier.None;
+            return await HasRecoveryBarrierAsync(token).ConfigureAwait(false) ? PocRecoveryBarrier.UnknownFailClosed : PocRecoveryBarrier.None;
         }
         Task SetRecoveryBarrierAsync(PocRecoveryBarrier barrier, CancellationToken token)
         {

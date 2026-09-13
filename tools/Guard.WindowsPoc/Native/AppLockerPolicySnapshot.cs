@@ -60,7 +60,7 @@ namespace Guard.WindowsPoc.Native
             catch (XmlException) { return false; }
         }
 
-        private static string Canonicalize(string xml)
+        internal static string Canonicalize(string xml)
         {
             ArgumentNullException.ThrowIfNull(xml);
             try

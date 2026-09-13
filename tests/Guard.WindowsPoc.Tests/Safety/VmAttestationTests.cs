@@ -7,7 +7,7 @@ namespace Guard.WindowsPoc.Tests.Safety
     public sealed class VmAttestationTests
     {
         internal static WindowsPocOptions Options => new(true, "COMS-PC-Guard-x64-Lab", "0123456789abcdef0123456789abcdef", @"C:\ComsPcGuardPoc\Fixtures");
-        internal static WindowsPlatformEvidence Platform => new(true, "x64", 26100, "QEMU", "Standard PC (Q35 + ICH9, 2009)", "COMS-PC-Guard-x64-Lab", "0123456789abcdef0123456789abcdef", true);
+        internal static WindowsPlatformEvidence Platform => new(true, "x64", 26100, "QEMU", "Standard PC (Q35 + ICH9, 2009)", "COMS-PC-Guard-x64-Lab", "0123456789abcdef0123456789abcdef", true) { SecureBootEnabled = true };
 
         [TestMethod]
         public void RejectsEveryMissingAttestationRequirement()
@@ -29,6 +29,16 @@ namespace Guard.WindowsPoc.Tests.Safety
             Assert.IsFalse(result.AllowWrite);
             Assert.IsFalse(VmAttestation.Evaluate(Options with { ExpectedVmName = "CHOI" }, Platform with { VmMarker = "CHOI" }).Attested);
             Assert.IsFalse(VmAttestation.Evaluate(Options with { ExpectedNonce = "" }, Platform with { Nonce = "" }).Attested);
+        }
+
+        [TestMethod]
+        public void OnlyApprovedHypervisorsWithSecureBootAreEligible()
+        {
+            Assert.IsTrue(VmAttestation.Evaluate(Options, Platform with { Manufacturer = "innotek GmbH", Model = "VirtualBox" }).Attested);
+            Assert.IsTrue(VmAttestation.Evaluate(Options, Platform with { Manufacturer = "Oracle Corporation", Model = "VirtualBox" }).Attested);
+            Assert.IsFalse(VmAttestation.Evaluate(Options, Platform with { Manufacturer = "VMware, Inc.", Model = "VMware Virtual Platform" }).Attested);
+            Assert.IsFalse(VmAttestation.Evaluate(Options, Platform with { Manufacturer = "Dell", Model = "VirtualBox" }).Attested);
+            Assert.IsFalse(VmAttestation.Evaluate(Options, Platform with { SecureBootEnabled = false }).Attested);
         }
     }
 }

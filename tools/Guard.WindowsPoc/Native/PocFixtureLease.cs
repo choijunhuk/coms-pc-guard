@@ -49,6 +49,7 @@ namespace Guard.WindowsPoc.Native
             ArgumentNullException.ThrowIfNull(decision);
             ObjectDisposedException.ThrowIf(_disposed, this);
             PocFixturePublisherEvidence publisher = _publisherVerifier.ReadPublisher(_target);
+            PocFixturePublisherEvidence controlPublisher = _publisherVerifier.ReadPublisher(_control);
             RevalidateHashes(_expected.TargetSha256, _expected.ControlSha256);
             _ = _expected.TargetPath == decision.FixturePath
                 && _expected.TargetSha256 == decision.FixtureHash
@@ -57,7 +58,23 @@ namespace Guard.WindowsPoc.Native
                 && _expected.ControlSha256.All(char.IsAsciiHexDigit)
                 && _expected.InventoryRevision == decision.InventoryRevision
                 && publisher == _expected.Publisher
+                && controlPublisher.Publisher == publisher.Publisher && controlPublisher.Product != publisher.Product
+                && controlPublisher.Binary != publisher.Binary
                 ? true : throw new InvalidOperationException("Protected fixture evidence unavailable or changed.");
+        }
+
+        internal static PocFixtureLeaseEvidence ReadNativeEvidence(string inventoryRevision)
+        {
+            if (!OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY"); }
+            const string targetPath = @"C:\ComsPcGuardPoc\Fixtures\target.exe";
+            const string controlPath = @"C:\ComsPcGuardPoc\Fixtures\control.exe";
+            using FileStream target = OpenRetainedReadHandle(targetPath);
+            using FileStream control = OpenRetainedReadHandle(controlPath);
+            PocFixturePublisherEvidence publisher = WindowsAuthenticodeFixturePublisherVerifier.Instance.ReadPublisher(target);
+            PocFixturePublisherEvidence controlPublisher = WindowsAuthenticodeFixturePublisherVerifier.Instance.ReadPublisher(control);
+            return publisher.Publisher != controlPublisher.Publisher || publisher.Product == controlPublisher.Product || publisher.Binary == controlPublisher.Binary
+                ? throw new InvalidOperationException("Distinct signed fixture identities required.")
+                : new(targetPath, Hash(target), controlPath, Hash(control), publisher, inventoryRevision);
         }
 
         internal static PocFixtureLease Open(PocFixtureLeaseEvidence expected)
@@ -172,7 +189,7 @@ namespace Guard.WindowsPoc.Native
 
             internal static ProcessStartInfo CreateStartInfo(string targetPath)
             {
-                const string script = "$path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $vi=(Get-Item -LiteralPath $path).VersionInfo; [pscustomobject]@{ Publisher=$sig.SignerCertificate.Subject; Product=$vi.ProductName; Binary=(Split-Path -Leaf $path); LowVersion=$vi.FileVersion; HighVersion=$vi.ProductVersion } | ConvertTo-Json -Compress";
+                const string script = "Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $path=$env:COMS_POC_FIXTURE_PATH; $sig=Get-AuthenticodeSignature -LiteralPath $path; if ($sig.Status -ne 'Valid' -or $null -eq $sig.SignerCertificate) { throw 'Invalid Authenticode signature.' }; $files=@(Get-AppLockerFileInformation -Path $path); if ($files.Count -ne 1 -or $null -eq $files[0].Publisher) { throw 'Publisher unavailable.' }; $pub=$files[0].Publisher; [pscustomobject]@{ Publisher=$pub.PublisherName; Product=$pub.ProductName; Binary=$pub.BinaryName; LowVersion=$pub.BinaryVersion.ToString(); HighVersion=$pub.BinaryVersion.ToString() } | ConvertTo-Json -Compress";
                 ProcessStartInfo info = new(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
                 {
                     UseShellExecute = false,

@@ -8,11 +8,16 @@ namespace Guard.WindowsPoc.Execution
     {
         private readonly IWindowsCommandRunner _runner;
         private readonly PocProtectedMutationAuthority? _authority;
+        private readonly PocNativeAuthorityFactory? _factory;
+        private readonly IPocSessionProbe? _probe;
 
-        internal NativePocPolicyGateway(IWindowsCommandRunner runner, PocProtectedMutationAuthority? authority = null)
+        internal NativePocPolicyGateway(IWindowsCommandRunner runner, PocProtectedMutationAuthority? authority = null,
+            PocNativeAuthorityFactory? factory = null, IPocSessionProbe? probe = null)
         {
             _runner = runner;
             _authority = authority;
+            _factory = factory;
+            _probe = probe;
         }
 
         public async Task<AppLockerPolicySnapshot> CaptureAsync(CancellationToken token)
@@ -24,6 +29,12 @@ namespace Guard.WindowsPoc.Execution
         public async Task WriteAsync(PocTransactionJournal journal, bool restore, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
+            if (_factory is not null)
+            {
+                using PocNativeAuthorityLease lease = await _factory.CreateAsync(journal, restore, token).ConfigureAwait(false);
+                await NativePocPolicyWriteOrchestrator.WriteAsync(_runner, lease.Authority, Convert, journal, restore, token).ConfigureAwait(false);
+                return;
+            }
             if (_authority is null) { throw new InvalidOperationException("Protected mutation authorization is required."); }
             await NativePocPolicyWriteOrchestrator.WriteAsync(_runner, _authority, Convert, journal, restore, token).ConfigureAwait(false);
         }
@@ -31,10 +42,10 @@ namespace Guard.WindowsPoc.Execution
         public Task<bool> ProbeAsync(CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
-            throw new InvalidOperationException("Interactive fixture probe evidence is not available.");
+            return _probe?.ProbeAsync(token) ?? throw new InvalidOperationException("Interactive fixture probe evidence is not available.");
         }
 
-        private static AppLockerPolicySnapshot Convert(WindowsCommandResult result)
+        internal static AppLockerPolicySnapshot Convert(WindowsCommandResult result)
         {
             AppLockerNativeSnapshot snapshot = result.Snapshot is { IsComplete: true } complete
                 ? complete : throw new InvalidOperationException("Native inventory unavailable.");

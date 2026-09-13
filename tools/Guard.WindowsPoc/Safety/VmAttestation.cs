@@ -3,7 +3,10 @@ using Guard.WindowsPoc.Configuration;
 namespace Guard.WindowsPoc.Safety
 {
     /// <summary>Trusted platform/ACL provider evidence; constructing this record does not authenticate a caller.</summary>
-    public sealed record WindowsPlatformEvidence(bool IsWindows, string Architecture, int Build, string Manufacturer, string Model, string VmMarker, string Nonce, bool MarkerAclVerified);
+    public sealed record WindowsPlatformEvidence(bool IsWindows, string Architecture, int Build, string Manufacturer, string Model, string VmMarker, string Nonce, bool MarkerAclVerified)
+    {
+        public bool SecureBootEnabled { get; init; }
+    }
 
     public sealed record VmAttestationResult
     {
@@ -18,9 +21,10 @@ namespace Guard.WindowsPoc.Safety
         {
             ArgumentNullException.ThrowIfNull(options);
             ArgumentNullException.ThrowIfNull(evidence);
-            bool valid = evidence.IsWindows && evidence.Architecture == "x64" && evidence.Build >= 26100
-                && evidence.Manufacturer.Equals("QEMU", StringComparison.OrdinalIgnoreCase)
-                && (evidence.Model.StartsWith("Standard PC (", StringComparison.Ordinal) || evidence.Model.Equals("QEMU", StringComparison.OrdinalIgnoreCase))
+            bool valid = evidence.IsWindows && evidence.Architecture == "x64" && evidence.Build >= 26100 && evidence.SecureBootEnabled
+                && ((evidence.Manufacturer.Equals("QEMU", StringComparison.OrdinalIgnoreCase)
+                    && (evidence.Model.StartsWith("Standard PC (", StringComparison.Ordinal) || evidence.Model.Equals("QEMU", StringComparison.OrdinalIgnoreCase)))
+                    || ((evidence.Manufacturer is "innotek GmbH" or "Oracle Corporation") && evidence.Model == "VirtualBox"))
                 && options.ExpectedVmName == WindowsPocOptions.AuthorizedVmName && evidence.VmMarker == options.ExpectedVmName
                 && options.ExpectedNonce.Length >= 32 && evidence.Nonce == options.ExpectedNonce && evidence.MarkerAclVerified
                 && options.FixtureRoot == WindowsPocOptions.AuthorizedFixtureRoot;

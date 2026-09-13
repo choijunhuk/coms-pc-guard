@@ -3,6 +3,8 @@ using Guard.Core.Policies;
 using Guard.Service.AppLocker;
 using Guard.WindowsPoc.Native;
 using Guard.WindowsPoc.Safety;
+using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Inventory;
 
 namespace Guard.WindowsPoc.Tests.Safety
 {
@@ -35,6 +37,18 @@ namespace Guard.WindowsPoc.Tests.Safety
         }
         internal static PolicyMutationGuard Guard => new(Preview, Owner, @"C:\ComsPcGuardPoc\Fixtures\target.exe", new string('A', 64), new FixedClock());
         internal static VmAttestationResult Attestation => VmAttestation.Evaluate(VmAttestationTests.Options, VmAttestationTests.Platform);
+
+        [TestMethod]
+        public void TransitionDecisionRequiresRecognizedJournalAndExactFreshCompiledState()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                new(Now, Snapshot.LocalPolicyXml, Snapshot.EffectivePolicyXml!, PolicyPresence.Absent, PolicyPresence.Absent, true, true),
+                new(Now, Snapshot.LocalPolicyXml, Snapshot.EffectivePolicyXml!, PolicyPresence.Absent, PolicyPresence.Absent, true, true),
+                new(Now, Xml, Xml, PolicyPresence.Absent, PolicyPresence.Absent, true, true), "proof", "lease", Now);
+            Assert.IsTrue(Guard.EvaluateTransition(Attestation, Snapshot, true, journal).Allowed);
+            Assert.IsFalse(Guard.EvaluateTransition(Attestation, Snapshot, false, journal).Allowed);
+            Assert.IsFalse(Guard.EvaluateTransition(Attestation, Snapshot with { Revision = "changed" }, true, journal).Allowed);
+        }
 
         [TestMethod]
         public void RequiresWriteSwitchElevationFreshEmptyRestorableSnapshot()

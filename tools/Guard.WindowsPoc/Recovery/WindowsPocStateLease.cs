@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Recovery
 {
@@ -16,6 +17,7 @@ namespace Guard.WindowsPoc.Recovery
         private readonly Func<FileStream, StateFileEvidence> _evidence;
         private StateFileEvidence _expected;
         private bool _disposed;
+        private OwnerTokenPolicyGateCapability? _capability;
         internal FileStream File { get; }
 
         private WindowsPocStateLease(string ownerSid, FileStream file, Func<IReadOnlyList<StatePathEvidence>> paths, Func<FileStream, StateFileEvidence> evidence)
@@ -31,6 +33,19 @@ namespace Guard.WindowsPoc.Recovery
             CrossProcessPolicyGate.ValidateNativeOwner(ownerSid);
             return OpenWindows(ownerSid);
         }
+
+        internal static WindowsPocStateLease Open(OwnerTokenPolicyGateCapability capability)
+        {
+            ArgumentNullException.ThrowIfNull(capability);
+            if (!OperatingSystem.IsWindows()) { throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY"); }
+            CrossProcessPolicyGate.RequireHeld(capability);
+            WindowsPocStateLease lease = OpenWindows(capability.OwnerSid, capability.RevalidateNativePrincipal().CurrentPrincipalSid);
+            lease._capability = capability;
+            try { lease.Revalidate(); return lease; }
+            catch { lease.Dispose(); throw; }
+        }
+
+        internal bool IsBoundTo(OwnerTokenPolicyGateCapability capability) { return ReferenceEquals(_capability, capability); }
 
         internal static WindowsPocStateLease Open(string ownerSid, Func<IReadOnlyList<StatePathEvidence>> paths, Func<FileStream> open, Func<FileStream, StateFileEvidence> evidence)
         {
@@ -48,6 +63,7 @@ namespace Guard.WindowsPoc.Recovery
         internal void Revalidate()
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_capability is not null) { CrossProcessPolicyGate.RequireHeld(_capability); }
             ValidatePaths(_ownerSid, _paths());
             if (ReadEvidence() != _expected) { throw Refused(); }
         }
@@ -89,14 +105,16 @@ namespace Guard.WindowsPoc.Recovery
         }
 
         [SupportedOSPlatform("windows")]
-        private static WindowsPocStateLease OpenWindows(string ownerSid)
+        private static WindowsPocStateLease OpenWindows(string ownerSid, string? creationPrincipal = null)
         {
             FileStream? held = null;
             string[] parents = [@"C:\", @"C:\ProgramData", @"C:\ProgramData\ComsPcGuardPoc"];
             // No directory provisioning: an absent or writable parent is refused before any open.
             return Open(ownerSid, () =>
             {
-                List<StatePathEvidence> paths = [.. parents.Select(path => ReadPath(new DirectoryInfo(path), null, ownerSid, false))];
+                List<StatePathEvidence> paths = [.. parents.Select(path => path is @"C:\" or @"C:\ProgramData"
+                    ? new StatePathEvidence(false, ownerSid, OwnerTokenAttestation.ValidateGlobalParent(path, ownerSid), false)
+                    : ReadPath(new DirectoryInfo(path), null, ownerSid, false))];
                 if (held is not null || System.IO.File.Exists(JournalPath))
                 { paths.Add(ReadPath(new FileInfo(JournalPath), held, ownerSid, true)); }
                 return paths;
@@ -104,10 +122,13 @@ namespace Guard.WindowsPoc.Recovery
             {
                 FileSecurity security = new();
                 security.SetAccessRuleProtection(true, false);
-                security.SetOwner(new SecurityIdentifier(ownerSid));
+                security.SetOwner(new SecurityIdentifier(creationPrincipal ?? ownerSid));
                 FileSystemRights rights = FileSystemRights.Read | FileSystemRights.Write | FileSystemRights.Synchronize;
                 foreach (string sid in new[] { "S-1-5-18", ownerSid })
-                { security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid), rights, AccessControlType.Allow)); }
+                {
+                    FileSystemRights granted = creationPrincipal == "S-1-5-18" && sid == ownerSid ? FileSystemRights.Read | FileSystemRights.Synchronize : rights;
+                    security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid), granted, AccessControlType.Allow));
+                }
                 // CreateNew never follows an existing target; existing files were prevalidated above.
                 held = System.IO.File.Exists(JournalPath)
                     ? new FileStream(JournalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 1)

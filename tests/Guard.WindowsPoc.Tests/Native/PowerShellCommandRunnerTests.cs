@@ -84,7 +84,7 @@ namespace Guard.WindowsPoc.Tests.Native
         [DataRow("<AppLockerPolicy Version=\"1\"><!--한글--></AppLockerPolicy>", "F6430F3D8B837EC94DCDE24CB3B2964D3B99164572D0D6AD2B8AF4E11E77EB45")]
         public async Task TrustedScriptSnapshotTransportsRawUtf8Hash(string xml, string expectedHash)
         {
-            string executable = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
+            string executable = OperatingSystem.IsWindows() ? @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" : "pwsh";
             string? powerShell = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
                 .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => Path.Combine(path, executable)).FirstOrDefault(File.Exists);
             if (powerShell is null) { Assert.Inconclusive("PowerShell unavailable; script snapshot execution not run."); }
@@ -131,7 +131,7 @@ namespace Guard.WindowsPoc.Tests.Native
         [TestMethod]
         public async Task TrustedScriptSnapshotRevisionIsStableForSameInventory()
         {
-            string executable = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
+            string executable = OperatingSystem.IsWindows() ? @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" : "pwsh";
             string? powerShell = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
                 .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => Path.Combine(path, executable)).FirstOrDefault(File.Exists);
             if (powerShell is null) { Assert.Inconclusive("PowerShell unavailable; script snapshot execution not run."); }

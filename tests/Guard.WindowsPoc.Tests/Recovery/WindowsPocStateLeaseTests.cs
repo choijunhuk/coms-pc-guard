@@ -68,6 +68,12 @@ namespace Guard.WindowsPoc.Tests.Recovery
         }
 
         [TestMethod]
+        public void SystemLeaseRequiresANonNullNativeCapability()
+        {
+            _ = Assert.ThrowsExactly<ArgumentNullException>(() => WindowsPocStateLease.Open((WindowsPoc.Safety.OwnerTokenPolicyGateCapability)null!));
+        }
+
+        [TestMethod]
         public void WindowsRetainedHandleDeniesReplacementAndOtherWriters()
         {
             if (!OperatingSystem.IsWindows()) { return; }

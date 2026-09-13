@@ -291,6 +291,26 @@ namespace Guard.WindowsPoc.Safety
         }
 
         [SupportedOSPlatform("windows")]
+        internal static void ValidateProtectedFile(FileStream file, string ownerSid)
+        {
+            OwnerTokenPathEvidence[] paths =
+            [
+                ReadProtection(new DirectoryInfo(@"C:\"), OwnerTokenPathEvidence.GlobalParentRole, ownerSid),
+                .. GlobalParents.Select(path => ReadProtection(new DirectoryInfo(path), OwnerTokenPathEvidence.GlobalParentRole, ownerSid)),
+                ReadProtection(new DirectoryInfo(ApplicationRoot), OwnerTokenPathEvidence.ApplicationDirectoryRole, ownerSid),
+                ReadProtection(file, OwnerTokenPathEvidence.ProofFileRole, ownerSid)
+            ];
+            if (!ValidateVmMarkerBoundary(ownerSid, paths)) { throw Refused(); }
+        }
+
+        [SupportedOSPlatform("windows")]
+        internal static bool ValidateGlobalParent(string path, string ownerSid)
+        {
+            OwnerTokenPathEvidence evidence = ReadProtection(new DirectoryInfo(path), OwnerTokenPathEvidence.GlobalParentRole, ownerSid);
+            return TrustedGlobalParentOwner(evidence.Owner) && evidence.AclKnown && !evidence.ReparsePoint && !evidence.UntrustedReplacement;
+        }
+
+        [SupportedOSPlatform("windows")]
         private static NativeVmMarker ReadNativeVmMarker(string ownerSid)
         {
             using FileStream file = new(VmMarkerPath, FileMode.Open, FileAccess.Read, FileShare.Read);

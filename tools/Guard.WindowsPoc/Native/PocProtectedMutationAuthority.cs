@@ -22,10 +22,11 @@ namespace Guard.WindowsPoc.Native
         private readonly bool _elevated;
         private readonly PocFixtureLease _fixtureLease;
         private readonly TimeProvider _clock;
+        private readonly Action? _revalidateConfiguration;
 
         internal PocProtectedMutationAuthority(OwnerTokenPolicyGateCapability gateCapability, WindowsPocStateLease stateLease,
             DurablePocJournalStore journalStore, PolicyMutationDecision decision, VmAttestationResult attestation, bool elevated,
-            PocFixtureLease fixtureLease, TimeProvider clock)
+            PocFixtureLease fixtureLease, TimeProvider clock, Action? revalidateConfiguration = null)
         {
             _gateCapability = gateCapability ?? throw new ArgumentNullException(nameof(gateCapability));
             _stateLease = stateLease ?? throw new ArgumentNullException(nameof(stateLease));
@@ -37,6 +38,7 @@ namespace Guard.WindowsPoc.Native
             if (!journalStore.Owns(stateLease)) { throw new InvalidOperationException("Protected journal store must use the retained state lease."); }
             _elevated = elevated;
             _clock = clock;
+            _revalidateConfiguration = revalidateConfiguration;
         }
 
         public async Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
@@ -45,6 +47,7 @@ namespace Guard.WindowsPoc.Native
             ArgumentNullException.ThrowIfNull(journal);
             ArgumentNullException.ThrowIfNull(trustedCurrent);
             CrossProcessPolicyGate.RequireHeld(_gateCapability);
+            _revalidateConfiguration?.Invoke();
             _stateLease.Revalidate();
             PocTransactionJournal? durable = await _journalStore.ReadAsync(token).ConfigureAwait(false);
             bool hostRecovery = await _journalStore.HasHostRecoveryRequiredAsync(token).ConfigureAwait(false);
@@ -133,6 +136,7 @@ namespace Guard.WindowsPoc.Native
         private void RevalidateScope()
         {
             CrossProcessPolicyGate.RequireHeld(_gateCapability);
+            _revalidateConfiguration?.Invoke();
             _stateLease.Revalidate();
             _fixtureLease.Revalidate(_decision);
         }

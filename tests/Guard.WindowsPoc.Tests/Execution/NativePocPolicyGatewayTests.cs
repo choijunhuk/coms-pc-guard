@@ -472,6 +472,13 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public void NativeFixtureCaptureRefusesOutsideWindows()
+        {
+            if (!OperatingSystem.IsWindows())
+            { _ = Assert.ThrowsExactly<PlatformNotSupportedException>(() => PocFixtureLease.ReadNativeEvidence(DecisionRevision)); }
+        }
+
+        [TestMethod]
         public void AuthenticodeProcessReaderFailsClosedOnStdoutOverflowBeforeExit()
         {
             if (OperatingSystem.IsWindows()) { return; }

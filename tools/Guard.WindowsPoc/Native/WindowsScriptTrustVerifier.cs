@@ -13,6 +13,7 @@ namespace Guard.WindowsPoc.Native
         public const string ScriptPath = @"C:\ProgramData\ComsPcGuardPoc\Scripts\Get-ComsPocInventory.ps1";
         internal const string SetPolicyScriptPath = @"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1";
         internal const string RemovePolicyScriptPath = @"C:\ProgramData\ComsPcGuardPoc\Scripts\Remove-ComsPocPolicy.ps1";
+        internal const string ProbeScriptPath = @"C:\ProgramData\ComsPcGuardPoc\Scripts\Test-ComsPocFixture.ps1";
         internal const string CiToolPath = @"C:\Windows\System32\CiTool.exe";
         internal static string ScriptPathFor(WindowsCommand command)
         {
@@ -120,6 +121,11 @@ namespace Guard.WindowsPoc.Native
         [SupportedOSPlatform("windows")]
         private static ScriptPathEvidence ReadPath(string path, FileStream? held, string filePath, bool systemExecutable)
         {
+            if (path is @"C:\" or @"C:\ProgramData")
+            {
+                bool trusted = Safety.OwnerTokenAttestation.ValidateGlobalParent(path, "S-1-5-18");
+                return new(path, false, "S-1-5-18", trusted, !trusted);
+            }
             FileSystemInfo entry = path == filePath ? new FileInfo(path) : new DirectoryInfo(path);
             if (!entry.Exists) { throw Refused(); }
             FileSystemSecurity security = entry is FileInfo file
@@ -162,7 +168,8 @@ namespace Guard.WindowsPoc.Native
                 ? string.Equals(path, CiToolPath, StringComparison.OrdinalIgnoreCase)
                 : string.Equals(path, ScriptPath, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(path, SetPolicyScriptPath, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(path, RemovePolicyScriptPath, StringComparison.OrdinalIgnoreCase);
+                    || string.Equals(path, RemovePolicyScriptPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(path, ProbeScriptPath, StringComparison.OrdinalIgnoreCase);
         }
 
         internal static bool AllowsUntrustedMutation(string sid, int accessMask, bool systemExecutable = false)

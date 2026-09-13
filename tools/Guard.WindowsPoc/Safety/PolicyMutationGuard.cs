@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using Guard.Service.AppLocker;
 using Guard.WindowsPoc.Configuration;
 using Guard.WindowsPoc.Native;
+using Guard.WindowsPoc.Recovery;
 
 namespace Guard.WindowsPoc.Safety
 {
@@ -35,6 +36,24 @@ namespace Guard.WindowsPoc.Safety
         private readonly AppLockerPolicyPreview _preview = preview ?? throw new ArgumentNullException(nameof(preview));
         private readonly TimeProvider _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         public string FixturePath { get; } = fixturePath;
+
+        internal PolicyMutationDecision EvaluateTransition(VmAttestationResult attestation, AppLockerNativeSnapshot snapshot,
+            bool elevated, PocTransactionJournal journal)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+            ArgumentNullException.ThrowIfNull(journal);
+            AppLockerPolicySnapshot current = new(snapshot.CapturedAtUtc, snapshot.LocalPolicyXml, snapshot.EffectivePolicyXml ?? "<AppLockerPolicy Version=\"1\" />",
+                snapshot.Inventory.CspMdm, snapshot.Inventory.Wdac, snapshot.AppIdServiceRunning, snapshot.AppIdServiceAutomatic);
+            string xml = _preview.IsCompleteStandalonePolicy ? AppLockerPolicySnapshot.Canonicalize(new AppLockerPolicyXmlWriter().Write(_preview)) : "";
+            bool allowed = snapshot.IsComplete && current.IsReady(_timeProvider.GetUtcNow()) && journal.InitialBaseline.IsEmpty
+                && current.SamePolicy(journal.Before) && journal.After.LocalPolicyXml == xml && journal.After.EffectivePolicyXml == xml
+                && attestation.Attested && attestation.AllowWrite && elevated && snapshot.Revision == _preview.InventoryRevision
+                && _preview.EligibleForNativeApplyRevalidation && ValidFixturePath(FixturePath)
+                && fixtureHash.Length == 64 && fixtureHash.All(char.IsAsciiHexDigit)
+                && _preview.DesiredOwnedRules.All(rule => rule.Action != AppLockerRuleAction.Deny
+                    || (rule.Sid != ownerSid && rule.Sid is not "S-1-1-0" and not "S-1-5-32-544"));
+            return new(allowed, xml, FixturePath, fixtureHash, snapshot.Revision);
+        }
 
         public PolicyMutationDecision Evaluate(VmAttestationResult attestation, AppLockerNativeSnapshot? snapshot, bool elevated)
         {

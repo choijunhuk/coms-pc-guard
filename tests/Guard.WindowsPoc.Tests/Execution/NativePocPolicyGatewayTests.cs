@@ -27,6 +27,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         private static readonly AppLockerPolicySnapshot Empty = Snapshot("<AppLockerPolicy Version=\"1\" />");
         private static readonly AppLockerPolicySnapshot First = Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>");
         private static readonly string[] AuthenticodeEnvironmentKeys = ["COMS_POC_FIXTURE_PATH", "PSModulePath", "SystemRoot", "WINDIR"];
+        private static readonly string[] ProductionFixtureLeaseFactoryNames = ["Open"];
         private static readonly string FixtureScratchRoot = Path.Combine(Environment.CurrentDirectory, "poc-fixture-tests");
 
         [TestMethod]
@@ -138,17 +139,9 @@ namespace Guard.WindowsPoc.Tests.Execution
                 await store.SaveAsync(journal.WithPhase(PocJournalPhase.Prepared), CancellationToken.None);
                 await store.SaveAsync(journal, CancellationToken.None);
                 await store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, CancellationToken.None);
-                OwnerTokenPolicyGateCapability capability = CapabilityForTest();
                 DriftOnMutationRunner runner = new();
-                NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, capability: capability));
-                CrossProcessPolicyGate gate = new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
-                typeof(CrossProcessPolicyGate).GetField("_heldCapability", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .SetValue(gate, capability);
-                _ = await gate.RunAsync<object?>(async () =>
-                {
-                    _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
-                    return null;
-                }, CancellationToken.None);
+                NativePocPolicyGateway gateway = new(runner, new StoreBackedFakeAuthority(store));
+                _ = await Assert.ThrowsAsync<PocPolicyDriftException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
                 Assert.AreEqual(PocRecoveryBarrier.NativeWriteInFlight, await store.ReadRecoveryBarrierAsync(CancellationToken.None));
             }
             finally { File.Delete(path); }
@@ -313,11 +306,30 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
-            await WithGatewayAsync(journal, CompleteFor(First.LocalPolicyXml, "E000000000000000000000000000000000000000000000000000000000000001"), async (gateway, runner) =>
-            {
-                await gateway.WriteAsync(journal, restore: true, CancellationToken.None);
-                CollectionAssert.AreEqual(new[] { WindowsCommand.Capture, WindowsCommand.Restore }, runner.Requests.Select(request => request.Command).ToArray());
-            }, savePreparedFirst: true, armRecoveryBarrier: true);
+            RecordingRunner runner = new(CompleteFor(First.LocalPolicyXml, "E000000000000000000000000000000000000000000000000000000000000001"));
+            NativePocPolicyGateway gateway = new(runner, new PassthroughFakeAuthority());
+            await gateway.WriteAsync(journal, restore: true, CancellationToken.None);
+            CollectionAssert.AreEqual(new[] { WindowsCommand.Capture, WindowsCommand.Restore }, runner.Requests.Select(request => request.Command).ToArray());
+        }
+
+        [TestMethod]
+        public void ProductionFixtureOpenRejectsHashSwapAfterDecisionWithoutPublisherEcho()
+        {
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OpenProductionFixtureLease(Encoding.UTF8.GetBytes("swapped-target-fixture")));
+        }
+
+        [TestMethod]
+        public void FixtureLeaseDoesNotExposeInternalFactoryThatMintsProductionLeaseWithoutAuthenticode()
+        {
+            MethodInfo[] staticMethods = typeof(PocFixtureLease).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            CollectionAssert.AreEquivalent(ProductionFixtureLeaseFactoryNames, staticMethods
+                .Where(method => method.ReturnType == typeof(PocFixtureLease))
+                .Select(method => method.Name)
+                .ToArray());
+            Assert.IsFalse(typeof(PocFixtureLease).GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+                .Any(type => type.Name.Contains("TestHook", StringComparison.OrdinalIgnoreCase)
+                    || type.Name.Contains("DelegatePublisher", StringComparison.OrdinalIgnoreCase)));
+            Assert.IsFalse(staticMethods.Any(method => method.Name.Contains("ForTest", StringComparison.OrdinalIgnoreCase)));
         }
 
         [TestMethod]
@@ -350,7 +362,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
-        public void FixtureLeaseTestFactoryOpensExpectedPathsAndRejectsMissingCanonicalTarget()
+        public void ProductionFixtureOpenRejectsMissingCanonicalTargetBeforePublisherEvidence()
         {
             _ = Directory.CreateDirectory(FixtureScratchRoot);
             string controlPath = Path.Combine(FixtureScratchRoot, Guid.NewGuid().ToString("N") + "-control.exe");
@@ -359,20 +371,11 @@ namespace Guard.WindowsPoc.Tests.Execution
                 Path.Combine(FixtureScratchRoot, Guid.NewGuid().ToString("N") + "-other-target.exe"), controlPath);
             try
             {
-                _ = PocFixtureLease.TestHook.OpenForTest(evidence);
+                _ = PocFixtureLease.Open(evidence);
                 Assert.Fail("Expected fixture open failure.");
             }
             catch (IOException) { }
             File.Delete(controlPath);
-        }
-
-        [TestMethod]
-        public void FixtureLeaseTestFactoryDoesNotAcceptCallerOpenedWritableHandles()
-        {
-            MethodInfo method = typeof(PocFixtureLease.TestHook).GetMethod("OpenForTest", BindingFlags.Static | BindingFlags.NonPublic)
-                ?? throw new AssertFailedException("Expected test factory.");
-            Assert.IsFalse(method.GetParameters().Any(parameter => parameter.ParameterType == typeof(FileStream)
-                || (parameter.ParameterType.IsGenericType && parameter.ParameterType.GetGenericTypeDefinition() == typeof(Func<>))));
         }
 
         [TestMethod]
@@ -447,7 +450,7 @@ namespace Guard.WindowsPoc.Tests.Execution
         [TestMethod]
         public void AuthenticodeVerifierUsesFixedPowerShellAndEncodedCommandWithBoundedEnvironment()
         {
-            ProcessStartInfo info = PocFixtureLease.TestHook.CreateAuthenticodeStartInfoForTest(@"C:\ComsPcGuardPoc\Fixtures\target.exe");
+            ProcessStartInfo info = PocFixtureLease.CreateAuthenticodeStartInfo(@"C:\ComsPcGuardPoc\Fixtures\target.exe");
             Assert.AreEqual(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", info.FileName);
             CollectionAssert.DoesNotContain(info.ArgumentList.ToArray(), "-Command");
             CollectionAssert.Contains(info.ArgumentList.ToArray(), "-EncodedCommand");
@@ -462,7 +465,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             if (OperatingSystem.IsWindows()) { return; }
             ProcessStartInfo info = ShellProcess("python3 - <<'PY'\nprint('x' * 20000)\nPY");
             _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
-                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromSeconds(5), maxChars: 1024));
+                PocFixtureLease.ExecuteAuthenticodeProcess(info, TimeSpan.FromSeconds(5), maxChars: 1024));
         }
 
         [TestMethod]
@@ -471,7 +474,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             if (OperatingSystem.IsWindows()) { return; }
             ProcessStartInfo info = ShellProcess("while true; do printf x >&2; done");
             _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
-                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromSeconds(1), maxChars: 4096));
+                PocFixtureLease.ExecuteAuthenticodeProcess(info, TimeSpan.FromSeconds(1), maxChars: 4096));
         }
 
         [TestMethod]
@@ -480,7 +483,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             if (OperatingSystem.IsWindows()) { return; }
             ProcessStartInfo info = ShellProcess("(sleep 5; printf late)& printf parent");
             _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
-                PocFixtureLease.TestHook.ExecuteAuthenticodeProcessForTest(info, TimeSpan.FromMilliseconds(300), maxChars: 4096));
+                PocFixtureLease.ExecuteAuthenticodeProcess(info, TimeSpan.FromMilliseconds(300), maxChars: 4096));
         }
 
         [TestMethod]
@@ -611,7 +614,12 @@ namespace Guard.WindowsPoc.Tests.Execution
             PocFixtureLeaseEvidence evidence = FixtureEvidence(targetPath, controlPath);
             File.WriteAllBytes(targetPath, targetBytes ?? FixtureBytes);
             File.WriteAllBytes(controlPath, controlBytes ?? ControlBytes);
-            return (PocFixtureLease.TestHook.OpenForTest(evidence), evidence);
+            return (PocFixtureLease.Open(evidence), evidence);
+        }
+
+        private static PocFixtureLease OpenProductionFixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
+        {
+            return FileFixtureLease(targetBytes, controlBytes).Lease;
         }
 
         private static PocFixtureLeaseEvidence FixtureEvidence(string targetPath = FixturePath, string controlPath = ControlPath)
@@ -664,6 +672,58 @@ namespace Guard.WindowsPoc.Tests.Execution
             public void Validate() { }
             public void Release() { }
             public void Dispose() { }
+        }
+
+        private sealed class StoreBackedFakeAuthority(DurablePocJournalStore store) : IPocProtectedMutationAuthority
+        {
+            public Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return store.SetRecoveryBarrierAsync(PocRecoveryBarrier.Capture, token);
+            }
+
+            public Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
+                AppLockerPolicySnapshot trustedCurrent, CancellationToken token)
+            {
+                return Task.FromResult<IPocMutationAuthorization>(new FakeAuthorization(journal, restore,
+                    trustedCurrent.RawLocalPolicySha256!, restore ? journal.InitialBaseline.LocalHash : journal.After.LocalHash,
+                    restore ? journal.InitialBaseline.LocalPolicyXml : journal.After.LocalPolicyXml));
+            }
+
+            public Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return store.SetRecoveryBarrierAsync(PocRecoveryBarrier.NativeWriteInFlight, token);
+            }
+
+            public Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return store.SetRecoveryBarrierAsync(PocRecoveryBarrier.ValidationComplete, token);
+            }
+        }
+
+        private sealed class PassthroughFakeAuthority : IPocProtectedMutationAuthority
+        {
+            public Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
+                AppLockerPolicySnapshot trustedCurrent, CancellationToken token)
+            {
+                return Task.FromResult<IPocMutationAuthorization>(new FakeAuthorization(journal, restore,
+                    trustedCurrent.RawLocalPolicySha256!, restore ? journal.InitialBaseline.LocalHash : journal.After.LocalHash,
+                    restore ? journal.InitialBaseline.LocalPolicyXml : journal.After.LocalPolicyXml));
+            }
+
+            public Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return Task.CompletedTask;
+            }
+
+            public Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token)
+            {
+                return Task.CompletedTask;
+            }
         }
 
         private sealed record FakeAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,

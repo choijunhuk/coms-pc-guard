@@ -7,9 +7,9 @@ namespace Guard.WindowsPoc.Execution
     internal sealed class NativePocPolicyGateway : IPocPolicyGateway
     {
         private readonly IWindowsCommandRunner _runner;
-        private readonly PocProtectedMutationAuthority? _authority;
+        private readonly IPocProtectedMutationAuthority? _authority;
 
-        internal NativePocPolicyGateway(IWindowsCommandRunner runner, PocProtectedMutationAuthority? authority = null)
+        internal NativePocPolicyGateway(IWindowsCommandRunner runner, IPocProtectedMutationAuthority? authority = null)
         {
             _runner = runner;
             _authority = authority;

@@ -250,59 +250,20 @@ namespace Guard.WindowsPoc.Native
             PocFixturePublisherEvidence ReadPublisher(FileStream target);
         }
 
-        internal static class TestHook
+        internal static ProcessStartInfo CreateAuthenticodeStartInfo(string targetPath)
         {
-            internal static PocFixtureLease OpenForTest(PocFixtureLeaseEvidence expected)
-            {
-                ArgumentNullException.ThrowIfNull(expected);
-                FileStream? target = null;
-                FileStream? control = null;
-                try
-                {
-                    target = OpenRetainedReadHandle(expected.TargetPath);
-                    control = OpenRetainedReadHandle(expected.ControlPath);
-                    return new PocFixtureLease(target, control, expected, new DelegatePublisherVerifier(expected.Publisher), deleteOnDispose: true);
-                }
-                catch
-                {
-                    target?.Dispose();
-                    control?.Dispose();
-                    throw;
-                }
-            }
+            return WindowsAuthenticodeFixturePublisherVerifier.CreateStartInfo(targetPath);
+        }
 
-            internal static ProcessStartInfo CreateAuthenticodeStartInfoForTest(string targetPath)
-            {
-                return WindowsAuthenticodeFixturePublisherVerifier.CreateStartInfo(targetPath);
-            }
-
-            internal static (string Output, string Error, int ExitCode) ExecuteAuthenticodeProcessForTest(ProcessStartInfo info, TimeSpan timeout, int maxChars)
-            {
-                return WindowsAuthenticodeFixturePublisherVerifier.ExecuteBounded(info, timeout, maxChars);
-            }
-
-            private sealed class DelegatePublisherVerifier(PocFixturePublisherEvidence expectedPublisher) : IPocFixturePublisherVerifier
-            {
-                public PocFixturePublisherEvidence ReadPublisher(FileStream target)
-                {
-                    return expectedPublisher;
-                }
-            }
+        internal static (string Output, string Error, int ExitCode) ExecuteAuthenticodeProcess(ProcessStartInfo info, TimeSpan timeout, int maxChars)
+        {
+            return WindowsAuthenticodeFixturePublisherVerifier.ExecuteBounded(info, timeout, maxChars);
         }
 
         private static void TryDelete(string path)
         {
             try { File.Delete(path); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-        }
-    }
-
-    internal static class ProcessStartInfoExtensions
-    {
-        public static ProcessStartInfo WithEnvironment(this ProcessStartInfo startInfo, string name, string value)
-        {
-            startInfo.Environment[name] = value;
-            return startInfo;
         }
     }
 }

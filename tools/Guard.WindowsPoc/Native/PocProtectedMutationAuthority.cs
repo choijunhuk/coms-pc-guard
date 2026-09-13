@@ -3,7 +3,16 @@ using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Native
 {
-    internal sealed class PocProtectedMutationAuthority
+    internal interface IPocProtectedMutationAuthority
+    {
+        Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token);
+        Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
+            AppLockerPolicySnapshot trustedCurrent, CancellationToken token);
+        Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token);
+        Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token);
+    }
+
+    internal sealed class PocProtectedMutationAuthority : IPocProtectedMutationAuthority
     {
         private readonly OwnerTokenPolicyGateCapability _gateCapability;
         private readonly WindowsPocStateLease _stateLease;
@@ -30,7 +39,7 @@ namespace Guard.WindowsPoc.Native
             _clock = clock;
         }
 
-        internal async Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
+        public async Task<IPocMutationAuthorization> AuthorizeAsync(PocTransactionJournal journal, bool restore,
             AppLockerPolicySnapshot trustedCurrent, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
@@ -73,7 +82,7 @@ namespace Guard.WindowsPoc.Native
                 PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml, RevalidateScope);
         }
 
-        internal async Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
+        public async Task PrearmNativeRecheckAsync(PocTransactionJournal journal, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
             CrossProcessPolicyGate.RequireHeld(_gateCapability);
@@ -86,12 +95,12 @@ namespace Guard.WindowsPoc.Native
             _stateLease.Revalidate();
         }
 
-        internal Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token)
+        public Task MarkNativeWriteInFlightAsync(PocTransactionJournal journal, CancellationToken token)
         {
             return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.NativeWriteInFlight, token);
         }
 
-        internal Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token)
+        public Task MarkNativeWriteVerifiedAsync(PocTransactionJournal journal, CancellationToken token)
         {
             return SetNativeWriteBarrierAsync(journal, PocRecoveryBarrier.ValidationComplete, token);
         }

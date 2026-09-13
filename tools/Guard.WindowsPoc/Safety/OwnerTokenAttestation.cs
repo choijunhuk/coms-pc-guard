@@ -138,8 +138,10 @@ namespace Guard.WindowsPoc.Safety
         internal const string ApplicationRoot = @"C:\ProgramData\ComsPcGuardPoc";
         internal const string ProofPath = ApplicationRoot + @"\owner-attestation.json";
         internal const string VmMarkerPath = ApplicationRoot + @"\vm-attestation.json";
+        internal delegate int FirmwareTableProvider(int firmwareTableProviderSignature, int firmwareTableId, byte[]? firmwareTableBuffer, int bufferSize);
         private static readonly string[] GlobalParents = [@"C:\ProgramData"];
         private const int CurrentVersion = 1;
+        private const int FirmwareProviderRsmb = 0x52534d42;
         private const string LocalSystemSid = "S-1-5-18";
         private const string AdministratorsSid = "S-1-5-32-544";
 
@@ -424,8 +426,64 @@ namespace Guard.WindowsPoc.Safety
                 ReadRegistryString(bios, "BIOSVendor"),
                 ReadRegistryString(bios, "BIOSVersion")
             ];
-            string systemUuid = ReadRegistryString(bios, "SystemUUID");
+            string systemUuid = CaptureSystemUuid();
             return new(ComputeVmIdentityHash(values, systemUuid), NormalizeSystemUuid(systemUuid));
+        }
+
+        [SupportedOSPlatform("windows")]
+        internal static string CaptureSystemUuid()
+        {
+            return CaptureSystemUuid(GetSystemFirmwareTable);
+        }
+
+        internal static string CaptureSystemUuid(FirmwareTableProvider readFirmwareTable)
+        {
+            ArgumentNullException.ThrowIfNull(readFirmwareTable);
+            int size = readFirmwareTable(FirmwareProviderRsmb, 0, null, 0);
+            if (size is <= 8 or > 64 * 1024) { throw Refused(); }
+
+            byte[] raw = new byte[size];
+            return readFirmwareTable(FirmwareProviderRsmb, 0, raw, raw.Length) == size ? ParseSmbiosSystemUuid(raw) : throw Refused();
+        }
+
+        internal static string ParseSmbiosSystemUuid(byte[] rawSmbiosData)
+        {
+            ArgumentNullException.ThrowIfNull(rawSmbiosData);
+            const int rawHeaderLength = 8;
+            const int structureHeaderLength = 4;
+            if (rawSmbiosData.Length <= rawHeaderLength) { throw Refused(); }
+            int declaredLength = BitConverter.ToInt32(rawSmbiosData, 4);
+            int tableEnd = rawHeaderLength + declaredLength;
+            if (declaredLength <= 0 || tableEnd > rawSmbiosData.Length) { throw Refused(); }
+
+            int offset = rawHeaderLength;
+            while (offset + structureHeaderLength <= tableEnd)
+            {
+                byte type = rawSmbiosData[offset];
+                int length = rawSmbiosData[offset + 1];
+                if (length < structureHeaderLength || offset + length > tableEnd) { throw Refused(); }
+                if (type == 1)
+                {
+                    if (length < 25) { throw Refused(); }
+                    byte[] uuidBytes = rawSmbiosData[(offset + 8)..(offset + 24)];
+                    return NormalizeSystemUuid(new Guid(uuidBytes).ToString("D"));
+                }
+
+                if (type == 127) { break; }
+                offset = NextSmbiosStructureOffset(rawSmbiosData, offset + length, tableEnd);
+            }
+
+            throw Refused();
+        }
+
+        private static int NextSmbiosStructureOffset(byte[] rawSmbiosData, int offset, int tableEnd)
+        {
+            for (int cursor = offset; cursor + 1 < tableEnd; cursor++)
+            {
+                if (rawSmbiosData[cursor] == 0 && rawSmbiosData[cursor + 1] == 0) { return cursor + 2; }
+            }
+
+            throw Refused();
         }
 
         internal static string ComputeVmIdentityHash(IReadOnlyList<string> platformValues, string systemUuid)
@@ -441,6 +499,12 @@ namespace Guard.WindowsPoc.Safety
         {
             return Guid.TryParse(systemUuid, out Guid uuid) && uuid != Guid.Empty ? uuid.ToString("D").ToLowerInvariant() : throw Refused();
         }
+
+        [SupportedOSPlatform("windows")]
+#pragma warning disable SYSLIB1054
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern int GetSystemFirmwareTable(int firmwareTableProviderSignature, int firmwareTableId, byte[]? firmwareTableBuffer, int bufferSize);
+#pragma warning restore SYSLIB1054
 
         [SupportedOSPlatform("windows")]
         private static string ReadRegistryString(RegistryKey? key, string name)

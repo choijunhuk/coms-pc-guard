@@ -181,6 +181,30 @@ namespace Guard.WindowsPoc.Tests.Safety
         }
 
         [TestMethod]
+        public void NativeSystemUuidProviderFailsClosedWhenAbsentOrMalformed()
+        {
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.CaptureSystemUuid((_, _, _, _) => 0));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.CaptureSystemUuid((_, _, _, _) => 100_000));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid([]));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.ParseSmbiosSystemUuid(BuildSmbiosTable(Guid.Empty)));
+        }
+
+        [TestMethod]
+        public void NativeSystemUuidProviderBindsSmbiosTypeOneUuid()
+        {
+            Guid uuid = Guid.Parse("11111111-2222-3333-4444-555555555555");
+            byte[] smbios = BuildSmbiosTable(uuid);
+
+            Assert.AreEqual(uuid.ToString("D"), OwnerTokenAttestation.ParseSmbiosSystemUuid(smbios));
+            Assert.AreEqual(uuid.ToString("D"), OwnerTokenAttestation.CaptureSystemUuid((_, _, buffer, size) =>
+            {
+                if (buffer is null) { return smbios.Length; }
+                Array.Copy(smbios, buffer, Math.Min(size, smbios.Length));
+                return smbios.Length;
+            }));
+        }
+
+        [TestMethod]
         public void VmMarkerRejectsMemberOwnedProtectedSystemWritableFile()
         {
             OwnerTokenPathEvidence[] memberOwnedMarker =
@@ -251,6 +275,20 @@ namespace Guard.WindowsPoc.Tests.Safety
                 UntrustedWrite = false,
                 UntrustedReplacement = false
             };
+        }
+
+        private static byte[] BuildSmbiosTable(Guid uuid)
+        {
+            byte[] table = new byte[8 + 25 + 2];
+            table[1] = 3;
+            table[2] = 6;
+            BitConverter.GetBytes(27).CopyTo(table, 4);
+            int typeOne = 8;
+            table[typeOne] = 1;
+            table[typeOne + 1] = 25;
+            table[typeOne + 2] = 1;
+            uuid.ToByteArray().CopyTo(table, typeOne + 8);
+            return table;
         }
     }
 }

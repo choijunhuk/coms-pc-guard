@@ -33,11 +33,12 @@ namespace Guard.WindowsPoc.Recovery
             _timeout = TimeSpan.FromSeconds(30);
             _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(ownerSid) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
         }
-        internal CrossProcessPolicyGate(OwnerTokenAttestationResult attestation)
+        internal CrossProcessPolicyGate(OwnerTokenPolicyGateCapability capability)
         {
-            ValidateOwnerAttestation(attestation);
+            ArgumentNullException.ThrowIfNull(capability);
+            _ = capability.Revalidate();
             _timeout = TimeSpan.FromSeconds(30);
-            _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(attestation) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
+            _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(capability) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
         }
         internal CrossProcessPolicyGate(Func<IPolicyMutex> open, TimeSpan timeout)
         {
@@ -57,13 +58,6 @@ namespace Guard.WindowsPoc.Recovery
             ValidateOwner(ownerSid);
             if (tokenUserSid != ownerSid) { throw new InvalidOperationException("Designated Owner token required; SYSTEM attestation is not provisioned."); }
         }
-        internal static void ValidateOwnerAttestation(OwnerTokenAttestationResult attestation)
-        {
-            ArgumentNullException.ThrowIfNull(attestation);
-            ValidateOwner(attestation.OwnerSid);
-            if (!attestation.AllowsPolicyGate) { throw new InvalidOperationException("Designated Owner or protected SYSTEM Owner-token attestation required."); }
-        }
-
         [SupportedOSPlatform("windows")]
         internal static void ValidateNativeOwner(string ownerSid)
         {
@@ -140,10 +134,9 @@ namespace Guard.WindowsPoc.Recovery
                 ValidateNativeOwner(ownerSid);
                 return OpenValidated(ownerSid);
             }
-            internal static NativeMutex Open(OwnerTokenAttestationResult attestation)
+            internal static NativeMutex Open(OwnerTokenPolicyGateCapability capability)
             {
-                ValidateOwnerAttestation(attestation);
-                return OpenValidated(attestation.OwnerSid);
+                return OpenValidated(capability.Revalidate());
             }
             private static NativeMutex OpenValidated(string ownerSid)
             {

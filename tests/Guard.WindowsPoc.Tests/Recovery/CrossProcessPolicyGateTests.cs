@@ -49,16 +49,15 @@ namespace Guard.WindowsPoc.Tests.Recovery
         }
 
         [TestMethod]
-        public void PolicyGateConstructionRequiresOwnerTokenAttestationResult()
+        public void PolicyGateConstructionRequiresNativeOwnerAttestationCapability()
         {
-            OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab");
-            OwnerTokenAttestationResult accepted = OwnerTokenAttestation.Evaluate(Owner, proof.Nonce, proof.ExpectedVmName,
-                new("S-1-5-18", false, true, proof));
+            OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab", new string('a', 64));
+            OwnerTokenPolicyGateCapability accepted = OwnerTokenAttestation.AuthorizePolicyGate(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
+                new OwnerTokenAttestationContext("S-1-5-18", false, true, proof));
             _ = new CrossProcessPolicyGate(accepted);
 
-            OwnerTokenAttestationResult refused = OwnerTokenAttestation.Evaluate(Owner, proof.Nonce, proof.ExpectedVmName,
-                new("S-1-5-18", false, true, proof with { AclVerified = false }));
-            _ = Assert.ThrowsExactly<InvalidOperationException>(() => new CrossProcessPolicyGate(refused));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => OwnerTokenAttestation.AuthorizePolicyGate(Owner, proof.Nonce, proof.ExpectedVmName,
+                proof.VmIdentityHash, new OwnerTokenAttestationContext("S-1-5-18", false, true, proof with { AclVerified = false })));
         }
 
         [TestMethod]

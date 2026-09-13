@@ -1,4 +1,5 @@
 using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Tests.Recovery
 {
@@ -45,6 +46,19 @@ namespace Guard.WindowsPoc.Tests.Recovery
             CrossProcessPolicyGate.ValidateOwnerIdentity(Owner, Owner);
             foreach (string? identity in new[] { null, "S-1-5-18", "S-1-5-32-544", "S-1-5-21-1-2-3-1002" })
             { _ = Assert.ThrowsExactly<InvalidOperationException>(() => CrossProcessPolicyGate.ValidateOwnerIdentity(Owner, identity)); }
+        }
+
+        [TestMethod]
+        public void PolicyGateConstructionRequiresOwnerTokenAttestationResult()
+        {
+            OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab");
+            OwnerTokenAttestationResult accepted = OwnerTokenAttestation.Evaluate(Owner, proof.Nonce, proof.ExpectedVmName,
+                new("S-1-5-18", false, true, proof));
+            _ = new CrossProcessPolicyGate(accepted);
+
+            OwnerTokenAttestationResult refused = OwnerTokenAttestation.Evaluate(Owner, proof.Nonce, proof.ExpectedVmName,
+                new("S-1-5-18", false, true, proof with { AclVerified = false }));
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => new CrossProcessPolicyGate(refused));
         }
 
         [TestMethod]

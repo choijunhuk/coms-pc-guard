@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Recovery
 {
@@ -32,6 +33,12 @@ namespace Guard.WindowsPoc.Recovery
             _timeout = TimeSpan.FromSeconds(30);
             _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(ownerSid) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
         }
+        internal CrossProcessPolicyGate(OwnerTokenAttestationResult attestation)
+        {
+            ValidateOwnerAttestation(attestation);
+            _timeout = TimeSpan.FromSeconds(30);
+            _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(attestation) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
+        }
         internal CrossProcessPolicyGate(Func<IPolicyMutex> open, TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(open);
@@ -49,6 +56,12 @@ namespace Guard.WindowsPoc.Recovery
         {
             ValidateOwner(ownerSid);
             if (tokenUserSid != ownerSid) { throw new InvalidOperationException("Designated Owner token required; SYSTEM attestation is not provisioned."); }
+        }
+        internal static void ValidateOwnerAttestation(OwnerTokenAttestationResult attestation)
+        {
+            ArgumentNullException.ThrowIfNull(attestation);
+            ValidateOwner(attestation.OwnerSid);
+            if (!attestation.AllowsPolicyGate) { throw new InvalidOperationException("Designated Owner or protected SYSTEM Owner-token attestation required."); }
         }
 
         [SupportedOSPlatform("windows")]
@@ -125,6 +138,15 @@ namespace Guard.WindowsPoc.Recovery
             internal static NativeMutex Open(string ownerSid)
             {
                 ValidateNativeOwner(ownerSid);
+                return OpenValidated(ownerSid);
+            }
+            internal static NativeMutex Open(OwnerTokenAttestationResult attestation)
+            {
+                ValidateOwnerAttestation(attestation);
+                return OpenValidated(attestation.OwnerSid);
+            }
+            private static NativeMutex OpenValidated(string ownerSid)
+            {
                 MutexSecurity security = new();
                 security.SetAccessRuleProtection(true, false);
                 security.SetOwner(new SecurityIdentifier(ownerSid));

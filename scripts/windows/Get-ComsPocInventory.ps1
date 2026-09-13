@@ -18,6 +18,26 @@ function Get-RawLocalPolicySha256([string] $Text) {
     } finally { $sha256.Dispose() }
 }
 
+function Get-ComsPocInventoryRevision(
+    [string] $LocalHash,
+    [string] $EffectiveHash,
+    [int] $LocalPresence,
+    [int] $EffectivePresence,
+    [int] $CspPresence,
+    [int] $WdacPresence,
+    [bool] $AppIdServiceRunning,
+    [bool] $AppIdServiceAutomatic,
+    [bool] $SystemContext,
+    [bool] $CspSucceeded,
+    [bool] $CiSucceeded,
+    [bool] $X64,
+    [int] $Build,
+    [string] $VmEvidence) {
+    $material = ($LocalHash, $EffectiveHash, $LocalPresence, $EffectivePresence, $CspPresence, $WdacPresence,
+        $AppIdServiceRunning, $AppIdServiceAutomatic, $SystemContext, $CspSucceeded, $CiSucceeded, $X64, $Build, $VmEvidence) -join '|'
+    return Get-RawLocalPolicySha256 $material
+}
+
 function Read-PolicyXml([string] $Text) {
     if ([string]::IsNullOrWhiteSpace($Text) -or $Text.Length -gt 500000) { throw 'Unavailable' }
     $settings = [System.Xml.XmlReaderSettings]::new()
@@ -106,12 +126,16 @@ try {
         $ciSucceeded = $true
     } catch { $wdacPresence = 0; $ciSucceeded = $false }
 
+    $localHash = Get-RawLocalPolicySha256 $local
+    $effectiveHash = Get-RawLocalPolicySha256 $effective
+    $revision = Get-ComsPocInventoryRevision $localHash $effectiveHash $localPresence $effectivePresence $cspPresence $wdacPresence `
+        ($service[0].State -eq 'Running') ($service[0].StartMode -eq 'Auto') $systemContext $cspSucceeded $ciSucceeded $x64 $build $vm
     $snapshot = [ordered]@{
         CapturedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
-        Revision = [guid]::NewGuid().ToString('N')
+        Revision = $revision
         Inventory = @{ Local = $localPresence; EffectiveGroupPolicy = $effectivePresence; CspMdm = $cspPresence; Wdac = $wdacPresence }
         LocalPolicyXml = $local
-        RawLocalPolicySha256 = Get-RawLocalPolicySha256 $local
+        RawLocalPolicySha256 = $localHash
         EffectivePolicyXml = $effective
         RestorationEligible = $false
         AppIdServiceRunning = $service[0].State -eq 'Running'

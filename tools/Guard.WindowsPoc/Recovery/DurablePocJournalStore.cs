@@ -11,6 +11,11 @@ namespace Guard.WindowsPoc.Recovery
         private readonly WindowsPocStateLease? _lease;
         internal DurablePocJournalStore(WindowsPocStateLease lease) : this(lease.File) { _lease = lease; }
         public void Dispose() { _lease?.Dispose(); }
+        internal bool Owns(WindowsPocStateLease lease)
+        {
+            ArgumentNullException.ThrowIfNull(lease);
+            return ReferenceEquals(_lease, lease) && ReferenceEquals(file, lease.File);
+        }
         private const int MaximumBytes = 16_000_000;
         private sealed record Entry(AppLockerPolicySnapshot InitialBaseline, AppLockerPolicySnapshot Before, AppLockerPolicySnapshot After,
             string OwnershipEvidence, string RecoveryLease, DateTimeOffset PreparedAtUtc, PocJournalPhase Phase);

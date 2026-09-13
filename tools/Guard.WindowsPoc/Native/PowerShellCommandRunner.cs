@@ -235,6 +235,7 @@ namespace Guard.WindowsPoc.Native
                 {
                     throw new InvalidOperationException("Protected mutation authorization does not match command.");
                 }
+                authorization.Revalidate();
 
                 using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(_timeout);
@@ -244,14 +245,18 @@ namespace Guard.WindowsPoc.Native
                 FileStream? payloadLease = null;
                 try
                 {
+                    authorization.Revalidate();
                     payloadLease = await WritePayloadIfNativeAsync(payloadPath, authorization.PayloadXml, authorization.ExpectedPayloadSha256, timeout.Token).ConfigureAwait(false);
                     ProcessStartInfo info = CreateStartInfo(request.Command, payloadPath, authorization.ExpectedCurrentSha256, authorization.ExpectedPayloadSha256);
                     timeout.Token.ThrowIfCancellationRequested();
+                    authorization.Revalidate();
                     lease.Revalidate();
                     if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
                     string json = await _executeMutation(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
+                    authorization.Revalidate();
                     ValidateMutationResult(json, authorization.Restore);
                     if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
+                    authorization.Revalidate();
                     return new(null);
                 }
                 finally

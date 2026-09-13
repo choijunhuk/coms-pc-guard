@@ -10,7 +10,7 @@ namespace Guard.WindowsPoc.Tests.Native
     public sealed class PowerShellCommandRunnerTests
     {
         internal const string Complete = """
-        {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"r1","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","RawLocalPolicySha256":"635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
+        {"CapturedAtUtc":"2026-09-13T00:00:00Z","Revision":"D000000000000000000000000000000000000000000000000000000000000001","Inventory":{"Local":1,"EffectiveGroupPolicy":1,"CspMdm":1,"Wdac":1},"LocalPolicyXml":"<AppLockerPolicy Version=\"1\" />","RawLocalPolicySha256":"635222D6F1EE0A7561E6C04E8894E688A5D19A3CE7549294F4C821A11F807E15","EffectivePolicyXml":"<AppLockerPolicy Version=\"1\" />","RestorationEligible":false,"AppIdServiceRunning":true,"AppIdServiceAutomatic":true,"SystemContext":true,"CspQuerySucceeded":true,"CiToolQuerySucceeded":true,"X64":true,"Build":26100,"VmEvidence":"Observed"}
         """;
 
         [TestMethod]
@@ -55,7 +55,7 @@ namespace Guard.WindowsPoc.Tests.Native
         [TestMethod]
         public void SyntheticDeserializedAndCopiedSnapshotsCannotManufactureCaptureProvenance()
         {
-            AppLockerNativeSnapshot synthetic = new(new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), "r1",
+            AppLockerNativeSnapshot synthetic = new(new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), "D000000000000000000000000000000000000000000000000000000000000001",
                 new(PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent, PolicyPresence.Absent),
                 "<AppLockerPolicy Version=\"1\" />", false, true, true)
             { EffectivePolicyXml = "<AppLockerPolicy Version=\"1\" />", Platform = new(true, 26100, "Observed") };
@@ -104,6 +104,10 @@ namespace Guard.WindowsPoc.Tests.Native
                 $service = @([pscustomobject]@{ State = 'Running'; StartMode = 'Auto' })
                 $systemContext = $true; $cspSucceeded = $true; $ciSucceeded = $true
                 $x64 = $true; $build = 26100; $vm = 'Observed'
+                $localHash = Get-RawLocalPolicySha256 $local
+                $effectiveHash = Get-RawLocalPolicySha256 $effective
+                $revision = Get-ComsPocInventoryRevision $localHash $effectiveHash $localPresence $effectivePresence $cspPresence $wdacPresence `
+                    ($service[0].State -eq 'Running') ($service[0].StartMode -eq 'Auto') $systemContext $cspSucceeded $ciSucceeded $x64 $build $vm
                 $assignment = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$snapshot' }, $true)
                 if ($null -eq $assignment) { throw 'Snapshot unavailable' }
                 $snapshot = & ([scriptblock]::Create($assignment.Right.Extent.Text))
@@ -120,6 +124,44 @@ namespace Guard.WindowsPoc.Tests.Native
             JsonObject output = JsonNode.Parse(json)!.AsObject();
             Assert.AreEqual(expectedHash, output["RawLocalPolicySha256"]?.GetValue<string>());
             Assert.IsTrue(PowerShellCommandRunner.ParseSnapshot(json).IsComplete);
+        }
+
+        [TestMethod]
+        public async Task TrustedScriptSnapshotRevisionIsStableForSameInventory()
+        {
+            string executable = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
+            string? powerShell = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+                .Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => Path.Combine(path, executable)).FirstOrDefault(File.Exists);
+            if (powerShell is null) { Assert.Inconclusive("PowerShell unavailable; script snapshot execution not run."); }
+            DirectoryInfo? root = new(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "ComsPcGuard.sln"))) { root = root.Parent; }
+            Assert.IsNotNull(root);
+            const string command = """
+                $ErrorActionPreference = 'Stop'
+                $tokens = $null; $errors = $null
+                $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:POC_CAPTURE_SCRIPT, [ref]$tokens, [ref]$errors)
+                if ($errors.Count -ne 0) { throw 'Script parse failure' }
+                foreach ($definition in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
+                    . ([scriptblock]::Create($definition.Extent.Text))
+                }
+                $localHash = Get-RawLocalPolicySha256 '<AppLockerPolicy Version="1" />'
+                $effectiveHash = Get-RawLocalPolicySha256 '<AppLockerPolicy Version="1" />'
+                $first = Get-ComsPocInventoryRevision $localHash $effectiveHash 1 1 1 1 $true $true $true $true $true $true 26100 'Observed'
+                Start-Sleep -Milliseconds 10
+                $second = Get-ComsPocInventoryRevision $localHash $effectiveHash 1 1 1 1 $true $true $true $true $true $true 26100 'Observed'
+                [Console]::Out.WriteLine(($first + "`n" + $second))
+                """;
+            System.Diagnostics.ProcessStartInfo info = new(powerShell)
+            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            info.Environment["POC_CAPTURE_SCRIPT"] = Path.Combine(root.FullName, "scripts", "windows", "Get-ComsPocInventory.ps1");
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command)) })
+            { info.ArgumentList.Add(argument); }
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+            string[] revisions = (await PowerShellCommandRunner.ExecuteProcessAsync(info, timeout.Token)).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.AreEqual(2, revisions.Length);
+            Assert.AreEqual(revisions[0], revisions[1]);
+            Assert.AreEqual(64, revisions[0].Length);
+            Assert.IsTrue(revisions[0].All(char.IsAsciiHexDigit));
         }
 
         private static System.Diagnostics.ProcessStartInfo Shell(string command, params string[] arguments)
@@ -284,6 +326,25 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
+        public async Task AuthorizedApplyRevalidatesProtectedScopeThroughDispatch()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            int revalidations = 0;
+            IPocMutationAuthorization authorization = new FakeAuthorization(journal, Restore: false,
+                journal.Before.RawLocalPolicySha256!, journal.After.LocalHash, journal.After.LocalPolicyXml, () =>
+                {
+                    if (++revalidations > 1) { throw new InvalidOperationException("scope released"); }
+                });
+            PowerShellCommandRunner runner = new(new Trust(), (_, _) => throw new AssertFailedException("Child started after scope release"));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None));
+            Assert.IsTrue(revalidations > 1);
+        }
+
+        [TestMethod]
         public async Task NativeDriftResultIsStickyTypedRefusal()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(
@@ -396,7 +457,7 @@ namespace Guard.WindowsPoc.Tests.Native
         [TestMethod]
         public void RejectsDuplicateFieldsAndMalformedEffectiveXml()
         {
-            _ = Assert.Throws<InvalidOperationException>(() => PowerShellCommandRunner.ParseSnapshot(Complete.Replace("\"Revision\":\"r1\"", "\"Revision\":\"r1\",\"Revision\":\"r2\"", StringComparison.Ordinal)));
+            _ = Assert.Throws<InvalidOperationException>(() => PowerShellCommandRunner.ParseSnapshot(Complete.Replace("\"Revision\":\"D000000000000000000000000000000000000000000000000000000000000001\"", "\"Revision\":\"D000000000000000000000000000000000000000000000000000000000000001\",\"Revision\":\"D000000000000000000000000000000000000000000000000000000000000002\"", StringComparison.Ordinal)));
             foreach (string xml in new[] { "not-xml", "<Other/>", "<!DOCTYPE x [<!ENTITY a SYSTEM 'file:///secret'>]><AppLockerPolicy Version='1'>&a;</AppLockerPolicy>" })
             {
                 JsonObject document = JsonNode.Parse(Complete)!.AsObject();
@@ -489,6 +550,12 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         private sealed record FakeAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
-            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization;
+            string ExpectedPayloadSha256, string PayloadXml, Action? RevalidateAction = null) : IPocMutationAuthorization
+        {
+            public void Revalidate()
+            {
+                RevalidateAction?.Invoke();
+            }
+        }
     }
 }

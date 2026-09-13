@@ -42,6 +42,7 @@ namespace Guard.WindowsPoc.Native
         string ExpectedCurrentSha256 { get; }
         string ExpectedPayloadSha256 { get; }
         string PayloadXml { get; }
+        void Revalidate();
     }
     public sealed record WindowsCommandRequest(WindowsCommand Command, string? PolicyXml = null, PolicyMutationDecision? Decision = null)
     {

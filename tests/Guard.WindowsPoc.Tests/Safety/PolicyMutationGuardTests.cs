@@ -10,6 +10,7 @@ namespace Guard.WindowsPoc.Tests.Safety
     public sealed class PolicyMutationGuardTests
     {
         internal const string Owner = "S-1-5-21-1-2-3-1000";
+        internal const string InventoryRevision = "D000000000000000000000000000000000000000000000000000000000000001";
         internal static readonly DateTimeOffset Now = new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero);
         internal sealed class FixedClock : TimeProvider
         {
@@ -20,7 +21,7 @@ namespace Guard.WindowsPoc.Tests.Safety
             }
         }
         internal const string Member = "S-1-5-21-1-2-3-1001";
-        internal static AppLockerPolicyPreview Preview => new AppLockerPreviewCompiler().Compile(new(Owner, [Member], [new("fixture", [new PublisherApplicationIdentity("fixture", "CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0))])], [new(PolicyDecisionKind.AuditOnly, PolicyReasonCode.WeeklySchedule, [], null, 1, Member, "fixture")], new(Now, "r1", 0, 0, 0, 0, true, true, []), Now, 1, AppLockerEnforcementMode.AuditOnly));
+        internal static AppLockerPolicyPreview Preview => new AppLockerPreviewCompiler().Compile(new(Owner, [Member], [new("fixture", [new PublisherApplicationIdentity("fixture", "CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0))])], [new(PolicyDecisionKind.AuditOnly, PolicyReasonCode.WeeklySchedule, [], null, 1, Member, "fixture")], new(Now, InventoryRevision, 0, 0, 0, 0, true, true, []), Now, 1, AppLockerEnforcementMode.AuditOnly));
         internal static string Xml => new AppLockerPolicyXmlWriter().Write(Preview);
         // Test-only fixture factory exercises the real transport parser and hash validation.
         internal static AppLockerNativeSnapshot Snapshot

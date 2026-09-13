@@ -43,13 +43,6 @@ namespace Guard.WindowsPoc.Recovery
             _open = () => OperatingSystem.IsWindows() ? NativeMutex.Open(capability) : throw new PlatformNotSupportedException("NOT_RUN_WINDOWS_ONLY");
             _heldCapability = capability;
         }
-        internal CrossProcessPolicyGate(OwnerTokenPolicyGateCapability capability, Func<IPolicyMutex> open, TimeSpan timeout)
-            : this(open, timeout)
-        {
-            ArgumentNullException.ThrowIfNull(capability);
-            _ = capability.RevalidateNativePrincipal();
-            _heldCapability = capability;
-        }
         internal CrossProcessPolicyGate(Func<IPolicyMutex> open, TimeSpan timeout)
         {
             ArgumentNullException.ThrowIfNull(open);

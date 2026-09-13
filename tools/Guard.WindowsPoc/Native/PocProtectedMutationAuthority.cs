@@ -25,6 +25,7 @@ namespace Guard.WindowsPoc.Native
             _attestation = attestation ?? throw new ArgumentNullException(nameof(attestation));
             _fixtureLease = fixtureLease ?? throw new ArgumentNullException(nameof(fixtureLease));
             ArgumentNullException.ThrowIfNull(clock);
+            if (!journalStore.Owns(stateLease)) { throw new InvalidOperationException("Protected journal store must use the retained state lease."); }
             _elevated = elevated;
             _clock = clock;
         }
@@ -56,7 +57,7 @@ namespace Guard.WindowsPoc.Native
                     ? true : throw new InvalidOperationException("Protected mutation authorization refused.");
                 _fixtureLease.Revalidate(_decision);
                 return new PocMutationAuthorization(journal, Restore: true, trustedCurrent.RawLocalPolicySha256,
-                    PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml);
+                    PolicyMutationDecision.Hash(journal.InitialBaseline.LocalPolicyXml), journal.InitialBaseline.LocalPolicyXml, RevalidateScope);
             }
 
             _ = trustedCurrent.SamePolicy(journal.Before) && _decision.Allowed
@@ -65,10 +66,23 @@ namespace Guard.WindowsPoc.Native
             _fixtureLease.Revalidate(_decision);
 
             return new PocMutationAuthorization(journal, Restore: false, trustedCurrent.RawLocalPolicySha256,
-                PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml);
+                PolicyMutationDecision.Hash(journal.After.LocalPolicyXml), journal.After.LocalPolicyXml, RevalidateScope);
+        }
+
+        private void RevalidateScope()
+        {
+            CrossProcessPolicyGate.RequireHeld(_gateCapability);
+            _stateLease.Revalidate();
+            _fixtureLease.Revalidate(_decision);
         }
 
         private sealed record PocMutationAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
-            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization;
+            string ExpectedPayloadSha256, string PayloadXml, Action RevalidateAction) : IPocMutationAuthorization
+        {
+            public void Revalidate()
+            {
+                RevalidateAction();
+            }
+        }
     }
 }

@@ -6,6 +6,7 @@ using Guard.WindowsPoc.Safety;
 using Guard.WindowsPoc.Tests.Native;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace Guard.WindowsPoc.Tests.Execution
@@ -17,8 +18,11 @@ namespace Guard.WindowsPoc.Tests.Execution
         private const string Owner = "S-1-5-21-1-2-3-1001";
         private const string FixturePath = @"C:\ComsPcGuardPoc\Fixtures\target.exe";
         private const string ControlPath = @"C:\ComsPcGuardPoc\Fixtures\control.exe";
-        private static readonly string FixtureHash = new('A', 64);
-        private static readonly string ControlHash = new('C', 64);
+        private const string DecisionRevision = "D000000000000000000000000000000000000000000000000000000000000001";
+        private static readonly byte[] FixtureBytes = Encoding.UTF8.GetBytes("target-fixture");
+        private static readonly byte[] ControlBytes = Encoding.UTF8.GetBytes("control-fixture");
+        private static readonly string FixtureHash = Convert.ToHexString(SHA256.HashData(FixtureBytes));
+        private static readonly string ControlHash = Convert.ToHexString(SHA256.HashData(ControlBytes));
         private static readonly AppLockerPolicySnapshot Empty = Snapshot("<AppLockerPolicy Version=\"1\" />");
         private static readonly AppLockerPolicySnapshot First = Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>");
 
@@ -121,13 +125,33 @@ namespace Guard.WindowsPoc.Tests.Execution
                 OwnerTokenPolicyGateCapability capability = CapabilityForTest();
                 RecordingRunner runner = new(CompleteFor(Empty.LocalPolicyXml));
                 NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, capability: capability));
-                CrossProcessPolicyGate gate = new(capability, () => new ImmediateMutex(), TimeSpan.FromSeconds(2));
-                _ = await gate.RunAsync(() => Task.FromResult<object?>(null), CancellationToken.None);
-
                 _ = await Assert.ThrowsAsync<InvalidOperationException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
                 Assert.AreEqual(WindowsCommand.Capture, runner.Requests.Single().Command);
             }
             finally { File.Delete(path); }
+        }
+
+        [TestMethod]
+        public void ProductionAuthorityRequiresJournalStoreBackedBySameRetainedLease()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
+                .WithPhase(PocJournalPhase.WritePending);
+            string leasePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            string otherPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            try
+            {
+                using WindowsPocStateLease lease = WindowsPocStateLease.Open(Owner,
+                    () => [new(false, Owner, true, false)],
+                    () => new FileStream(leasePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 1), Evidence);
+                using FileStream other = new(otherPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 1);
+                using DurablePocJournalStore store = new(other);
+                _ = Assert.ThrowsExactly<InvalidOperationException>(() => Authority(lease, store, journal));
+            }
+            finally
+            {
+                File.Delete(leasePath);
+                File.Delete(otherPath);
+            }
         }
 
         [TestMethod]
@@ -180,7 +204,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
             JsonObject capture = JsonNode.Parse(CompleteFor(Empty.LocalPolicyXml))!.AsObject();
-            capture["Revision"] = "r2";
+            capture["Revision"] = "D000000000000000000000000000000000000000000000000000000000000002";
             await WithGatewayAsync(journal, capture.ToJsonString(), async (gateway, runner) =>
             {
                 _ = await Assert.ThrowsAsync<InvalidOperationException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
@@ -192,11 +216,11 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
-            string currentTargetHash = new('B', 64);
-            await WithGatewayAsync(journal, CompleteFor(Empty.LocalPolicyXml), async (gateway, runner) =>
+            byte[] currentTargetBytes = Encoding.UTF8.GetBytes("swapped-target-fixture");
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => WithGatewayAsync(journal, CompleteFor(Empty.LocalPolicyXml), async (gateway, runner) =>
             {
-                _ = await Assert.ThrowsAsync<InvalidOperationException>(() => gateway.WriteAsync(journal, restore: false, CancellationToken.None));
-            }, savePreparedFirst: true, armRecoveryBarrier: true, fixtureLease: () => FixtureEvidence(currentTargetHash, ControlHash));
+                await gateway.WriteAsync(journal, restore: false, CancellationToken.None);
+            }, savePreparedFirst: true, armRecoveryBarrier: true, targetBytes: currentTargetBytes));
         }
 
         [TestMethod]
@@ -204,11 +228,11 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
                 .WithPhase(PocJournalPhase.WritePending);
-            string currentTargetHash = new('B', 64);
-            await WithGatewayAsync(journal, CompleteFor(First.LocalPolicyXml), async (gateway, runner) =>
+            byte[] currentTargetBytes = Encoding.UTF8.GetBytes("swapped-target-fixture");
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => WithGatewayAsync(journal, CompleteFor(First.LocalPolicyXml), async (gateway, runner) =>
             {
-                _ = await Assert.ThrowsAsync<InvalidOperationException>(() => gateway.WriteAsync(journal, restore: true, CancellationToken.None));
-            }, savePreparedFirst: true, armRecoveryBarrier: true, fixtureLease: () => FixtureEvidence(currentTargetHash, ControlHash));
+                await gateway.WriteAsync(journal, restore: true, CancellationToken.None);
+            }, savePreparedFirst: true, armRecoveryBarrier: true, targetBytes: currentTargetBytes));
         }
 
         [TestMethod]
@@ -253,7 +277,7 @@ namespace Guard.WindowsPoc.Tests.Execution
 
         private static async Task WithGatewayAsync(PocTransactionJournal journal, string captureJson,
             Func<NativePocPolicyGateway, RecordingRunner, Task> action, bool savePreparedFirst = true,
-            bool armRecoveryBarrier = true, bool hostRecoveryLatch = false, Func<PocFixtureLeaseEvidence>? fixtureLease = null,
+            bool armRecoveryBarrier = true, bool hostRecoveryLatch = false, byte[]? targetBytes = null, byte[]? controlBytes = null,
             bool holdProtectedGate = true)
         {
             string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -269,10 +293,9 @@ namespace Guard.WindowsPoc.Tests.Execution
                 if (hostRecoveryLatch) { await store.SetHostRecoveryRequiredAsync(CancellationToken.None); }
                 OwnerTokenPolicyGateCapability capability = CapabilityForTest();
                 RecordingRunner runner = new(captureJson);
-                NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, fixtureLease, capability));
-                CrossProcessPolicyGate gate = holdProtectedGate
-                    ? new(capability, () => new ImmediateMutex(), TimeSpan.FromSeconds(2))
-                    : new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
+                NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, targetBytes, controlBytes, capability));
+                _ = holdProtectedGate;
+                CrossProcessPolicyGate gate = new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
                 _ = await gate.RunAsync<object?>(async () =>
                 {
                     await action(gateway, runner);
@@ -283,17 +306,22 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         private static PocProtectedMutationAuthority Authority(WindowsPocStateLease lease, DurablePocJournalStore store,
-            PocTransactionJournal journal, Func<PocFixtureLeaseEvidence>? fixtureLease = null, OwnerTokenPolicyGateCapability? capability = null)
+            PocTransactionJournal journal, byte[]? targetBytes = null, byte[]? controlBytes = null, OwnerTokenPolicyGateCapability? capability = null)
         {
             return new(capability ?? CapabilityForTest(), lease, store,
-                new PolicyMutationDecision(true, journal.After.LocalPolicyXml, FixturePath, FixtureHash, "r1"),
-                new VmAttestationResult(true, true), elevated: true, new PocFixtureLease(fixtureLease ?? (() => FixtureEvidence(FixtureHash, ControlHash))), new FixedClock());
+                new PolicyMutationDecision(true, journal.After.LocalPolicyXml, FixturePath, FixtureHash, DecisionRevision),
+                new VmAttestationResult(true, true), elevated: true, FixtureLease(targetBytes, controlBytes), new FixedClock());
         }
 
-        private static PocFixtureLeaseEvidence FixtureEvidence(string targetHash, string controlHash)
+        private static PocFixtureLease FixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
         {
-            return new(FixturePath, targetHash, ControlPath, controlHash,
-                new("CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0)), "r1");
+            return new(new MemoryStream(targetBytes ?? FixtureBytes, writable: true), new MemoryStream(controlBytes ?? ControlBytes, writable: true), FixtureEvidence());
+        }
+
+        private static PocFixtureLeaseEvidence FixtureEvidence()
+        {
+            return new(FixturePath, FixtureHash, ControlPath, ControlHash,
+                new("CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0)), DecisionRevision);
         }
 
         private static string CompleteFor(string xml)
@@ -302,6 +330,7 @@ namespace Guard.WindowsPoc.Tests.Execution
             input["LocalPolicyXml"] = xml;
             input["EffectivePolicyXml"] = xml;
             input["RawLocalPolicySha256"] = PolicyMutationDecision.Hash(xml);
+            input["Revision"] = DecisionRevision;
             return input.ToJsonString();
         }
 
@@ -342,6 +371,9 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         private sealed record FakeAuthorization(PocTransactionJournal Journal, bool Restore, string ExpectedCurrentSha256,
-            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization;
+            string ExpectedPayloadSha256, string PayloadXml) : IPocMutationAuthorization
+        {
+            public void Revalidate() { }
+        }
     }
 }

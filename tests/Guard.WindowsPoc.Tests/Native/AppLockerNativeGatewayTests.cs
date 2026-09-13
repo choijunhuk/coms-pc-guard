@@ -123,9 +123,10 @@ namespace Guard.WindowsPoc.Tests.Native
         [TestMethod]
         public void CommandsUseFixedScriptAndSeparateArguments()
         {
-            System.Diagnostics.ProcessStartInfo info = PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Apply, @"C:\ProgramData\ComsPcGuardPoc\payload.xml");
+            string sha = new('A', 64);
+            System.Diagnostics.ProcessStartInfo info = PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Apply, @"C:\ProgramData\ComsPcGuardPoc\payload.xml", sha, sha);
             Assert.IsFalse(info.UseShellExecute);
-            string[] expected = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", @"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", "-PolicyPath", @"C:\ProgramData\ComsPcGuardPoc\payload.xml"];
+            string[] expected = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", @"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", "-PolicyPath", @"C:\ProgramData\ComsPcGuardPoc\payload.xml", "-ExpectedCurrentSha256", sha, "-ExpectedPayloadSha256", sha];
             CollectionAssert.AreEqual(expected, info.ArgumentList.ToArray());
             _ = Assert.Throws<ArgumentException>(() => PowerShellCommandRunner.CreateStartInfo(WindowsCommand.Apply, "<xml>;evil"));
         }

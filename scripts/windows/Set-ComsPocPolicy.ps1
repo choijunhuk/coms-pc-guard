@@ -1,7 +1,11 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory = $true)]
-    [string] $PolicyPath
+    [string] $PolicyPath,
+    [Parameter(Mandatory = $true)]
+    [string] $ExpectedCurrentSha256,
+    [Parameter(Mandatory = $true)]
+    [string] $ExpectedPayloadSha256
 )
 
 Set-StrictMode -Version Latest
@@ -12,7 +16,19 @@ $VerbosePreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
 
+function Get-Sha256Hex([string] $Text) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))).Replace('-', '')
+    } finally { $sha256.Dispose() }
+}
+
+function Write-Result([string] $Status) {
+    [Console]::Out.WriteLine((ConvertTo-Json -InputObject @{ Status = $Status } -Compress))
+}
+
 try {
+    if ($ExpectedCurrentSha256 -notmatch '^[0-9A-Fa-f]{64}$' -or $ExpectedPayloadSha256 -notmatch '^[0-9A-Fa-f]{64}$') { throw 'Refused' }
     $root = 'C:\ProgramData\ComsPcGuardPoc'
     $full = [System.IO.Path]::GetFullPath($PolicyPath)
     if (-not $full.StartsWith($root + '\', [System.StringComparison]::Ordinal) -or
@@ -34,10 +50,16 @@ try {
             if ($document.DocumentElement.Name -ne 'AppLockerPolicy' -or $document.DocumentElement.GetAttribute('Version') -ne '1') { throw 'Refused' }
         } finally { $reader.Dispose() }
     } finally { $stream.Dispose() }
+    $payload = [System.IO.File]::ReadAllText($full, [System.Text.Encoding]::UTF8)
+    if ((Get-Sha256Hex $payload) -ne $ExpectedPayloadSha256.ToUpperInvariant()) { throw 'Refused' }
+    $current = [string](Get-AppLockerPolicy -Local -Xml -ErrorAction Stop)
+    if ((Get-Sha256Hex $current) -ne $ExpectedCurrentSha256.ToUpperInvariant()) { throw 'Drift' }
     if ($PSCmdlet.ShouldProcess('Local AppLocker policy', 'Set COMS PoC policy')) {
         Set-AppLockerPolicy -XMLPolicy $full -ErrorAction Stop
     }
+    Write-Result 'Applied'
     exit 0
 } catch {
+    Write-Result 'Refused'
     exit 3
 }

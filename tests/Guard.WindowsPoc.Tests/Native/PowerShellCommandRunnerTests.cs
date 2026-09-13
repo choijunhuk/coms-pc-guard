@@ -235,7 +235,23 @@ namespace Guard.WindowsPoc.Tests.Native
         }
 
         [TestMethod]
-        public async Task JournaledApplyRunsFixedMutationScriptFromWritePendingJournal()
+        public async Task JournaledApplyRequiresOpaqueProtectedAuthorization()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\" />"),
+                Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
+                "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            PowerShellCommandRunner runner = new(new Trust(), (_, _) => throw new AssertFailedException("Child started"));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(new(WindowsCommand.Apply), CancellationToken.None));
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(new(WindowsCommand.Apply) { Authorization = null }, CancellationToken.None));
+            Assert.IsFalse(PocMutationAuthorization.TryAuthorize(
+                PocTransactionJournal.Prepare(journal.InitialBaseline, journal.Before, journal.After, "owner-proof", "lease", journal.PreparedAtUtc),
+                restore: false, Snapshot("<AppLockerPolicy Version=\"1\" />"), "proof", out _));
+        }
+
+        [TestMethod]
+        public async Task AuthorizedApplyRunsFixedMutationScriptWithExpectedHashes()
         {
             Trust trust = new();
             PocTransactionJournal journal = PocTransactionJournal.Prepare(
@@ -243,6 +259,7 @@ namespace Guard.WindowsPoc.Tests.Native
                 Snapshot("<AppLockerPolicy Version=\"1\" />"),
                 Snapshot("<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"AuditOnly\" /></AppLockerPolicy>"),
                 "owner-proof", "lease", new(2026, 9, 13, 0, 0, 0, TimeSpan.Zero)).WithPhase(PocJournalPhase.WritePending);
+            PocMutationAuthorization authorization = PocMutationAuthorization.AuthorizeForTest(journal, restore: false, Snapshot("<AppLockerPolicy Version=\"1\" />"), "proof");
             string? payloadPath = null;
             PowerShellCommandRunner runner = new(trust, (info, token) =>
             {
@@ -251,14 +268,18 @@ namespace Guard.WindowsPoc.Tests.Native
                 Assert.IsFalse(info.UseShellExecute);
                 Assert.Contains(@"C:\ProgramData\ComsPcGuardPoc\Scripts\Set-ComsPocPolicy.ps1", info.ArgumentList);
                 Assert.Contains("-PolicyPath", info.ArgumentList);
+                Assert.Contains("-ExpectedCurrentSha256", info.ArgumentList);
+                Assert.Contains(journal.Before.LocalHash, info.ArgumentList);
+                Assert.Contains("-ExpectedPayloadSha256", info.ArgumentList);
+                Assert.Contains(journal.After.LocalHash, info.ArgumentList);
                 payloadPath = info.ArgumentList[info.ArgumentList.IndexOf("-PolicyPath") + 1];
                 Assert.StartsWith(@"C:\ProgramData\ComsPcGuardPoc\", payloadPath);
                 Assert.EndsWith(".xml", payloadPath);
                 Assert.DoesNotContain("AppLockerPolicy", string.Join(" ", info.ArgumentList));
                 Assert.IsTrue(token.CanBeCanceled);
-                return Task.FromResult(Complete);
+                return Task.FromResult(/*lang=json,strict*/ "{\"Status\":\"Applied\"}");
             });
-            Assert.IsTrue((await runner.RunAsync(WindowsCommandRequest.Apply(journal), CancellationToken.None)).Snapshot!.IsComplete);
+            Assert.IsNull((await runner.RunAsync(WindowsCommandRequest.Apply(authorization), CancellationToken.None)).Snapshot);
             Assert.IsNotNull(payloadPath);
             Assert.IsTrue(trust.Disposed);
         }

@@ -35,18 +35,69 @@ namespace Guard.WindowsPoc.Native
             return presence is PolicyPresence.Absent or PolicyPresence.External;
         }
     }
+    internal sealed class PocMutationAuthorization
+    {
+        private PocMutationAuthorization(PocTransactionJournal journal, bool restore, string expectedCurrentSha256,
+            string expectedPayloadSha256, string payloadXml, string protectedProof)
+        {
+            Journal = journal; Restore = restore; ExpectedCurrentSha256 = expectedCurrentSha256;
+            ExpectedPayloadSha256 = expectedPayloadSha256; PayloadXml = payloadXml; ProtectedProof = protectedProof;
+        }
+
+        internal PocTransactionJournal Journal { get; }
+        internal bool Restore { get; }
+        internal string ExpectedCurrentSha256 { get; }
+        internal string ExpectedPayloadSha256 { get; }
+        internal string PayloadXml { get; }
+        internal string ProtectedProof { get; }
+
+        internal static bool TryAuthorize(PocTransactionJournal journal, bool restore, AppLockerPolicySnapshot trustedCurrent,
+            string protectedProof, out PocMutationAuthorization? authorization)
+        {
+            ArgumentNullException.ThrowIfNull(journal);
+            ArgumentNullException.ThrowIfNull(trustedCurrent);
+            authorization = null;
+            if (journal.Phase != PocJournalPhase.WritePending || string.IsNullOrWhiteSpace(protectedProof)
+                || !trustedCurrent.IsReady(trustedCurrent.CapturedAtUtc))
+            {
+                return false;
+            }
+
+            if (restore)
+            {
+                if (!journal.Recognizes(trustedCurrent) || trustedCurrent.SamePolicy(journal.InitialBaseline)) { return false; }
+                authorization = new(journal, true, trustedCurrent.LocalHash, journal.InitialBaseline.LocalHash,
+                    journal.InitialBaseline.LocalPolicyXml, protectedProof);
+                return true;
+            }
+
+            if (!trustedCurrent.SamePolicy(journal.Before)) { return false; }
+            authorization = new(journal, false, journal.Before.LocalHash, journal.After.LocalHash,
+                journal.After.LocalPolicyXml, protectedProof);
+            return true;
+        }
+
+        internal static PocMutationAuthorization AuthorizeForTest(PocTransactionJournal journal, bool restore,
+            AppLockerPolicySnapshot trustedCurrent, string protectedProof)
+        {
+            return TryAuthorize(journal, restore, trustedCurrent, protectedProof, out PocMutationAuthorization? authorization)
+                ? authorization! : throw new InvalidOperationException("Protected mutation authorization refused.");
+        }
+    }
     public sealed record WindowsCommandRequest(WindowsCommand Command, string? PolicyXml = null, PolicyMutationDecision? Decision = null)
     {
-        internal PocTransactionJournal? Journal { get; init; }
-        internal static WindowsCommandRequest Apply(PocTransactionJournal journal)
+        internal PocMutationAuthorization? Authorization { get; init; }
+        internal static WindowsCommandRequest Apply(PocMutationAuthorization authorization)
         {
-            ArgumentNullException.ThrowIfNull(journal);
-            return new(WindowsCommand.Apply) { Journal = journal };
+            ArgumentNullException.ThrowIfNull(authorization);
+            _ = !authorization.Restore ? true : throw new ArgumentException("Apply requires apply authorization.", nameof(authorization));
+            return new(WindowsCommand.Apply) { Authorization = authorization };
         }
-        internal static WindowsCommandRequest Restore(PocTransactionJournal journal)
+        internal static WindowsCommandRequest Restore(PocMutationAuthorization authorization)
         {
-            ArgumentNullException.ThrowIfNull(journal);
-            return new(WindowsCommand.Restore) { Journal = journal };
+            ArgumentNullException.ThrowIfNull(authorization);
+            _ = authorization.Restore ? true : throw new ArgumentException("Restore requires restore authorization.", nameof(authorization));
+            return new(WindowsCommand.Restore) { Authorization = authorization };
         }
     }
     public sealed record WindowsCommandResult(AppLockerNativeSnapshot? Snapshot);

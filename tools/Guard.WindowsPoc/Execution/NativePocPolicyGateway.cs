@@ -4,26 +4,37 @@ using Guard.WindowsPoc.Recovery;
 
 namespace Guard.WindowsPoc.Execution
 {
-    internal sealed class NativePocPolicyGateway(IWindowsCommandRunner runner) : IPocPolicyGateway
+    internal sealed class NativePocPolicyGateway : IPocPolicyGateway
     {
+        private readonly IWindowsCommandRunner _runner;
+        private readonly Func<PocTransactionJournal, bool, CancellationToken, Task<PocMutationAuthorization>>? _authorize;
+
+        internal NativePocPolicyGateway(IWindowsCommandRunner runner,
+            Func<PocTransactionJournal, bool, CancellationToken, Task<PocMutationAuthorization>>? authorize = null)
+        {
+            _runner = runner;
+            _authorize = authorize;
+        }
+
         public async Task<AppLockerPolicySnapshot> CaptureAsync(CancellationToken token)
         {
-            WindowsCommandResult result = await runner.RunAsync(new(WindowsCommand.Capture), token).ConfigureAwait(false);
+            WindowsCommandResult result = await _runner.RunAsync(new(WindowsCommand.Capture), token).ConfigureAwait(false);
             return Convert(result);
         }
 
         public async Task WriteAsync(PocTransactionJournal journal, bool restore, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(journal);
-            WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(journal) : WindowsCommandRequest.Apply(journal);
-            _ = await runner.RunAsync(request, token).ConfigureAwait(false);
+            if (_authorize is null) { throw new InvalidOperationException("Protected mutation authorization is required."); }
+            PocMutationAuthorization authorization = await _authorize(journal, restore, token).ConfigureAwait(false);
+            WindowsCommandRequest request = restore ? WindowsCommandRequest.Restore(authorization) : WindowsCommandRequest.Apply(authorization);
+            _ = await _runner.RunAsync(request, token).ConfigureAwait(false);
         }
 
-        public async Task<bool> ProbeAsync(CancellationToken token)
+        public Task<bool> ProbeAsync(CancellationToken token)
         {
-            WindowsCommandResult result = await runner.RunAsync(new(WindowsCommand.Capture), token).ConfigureAwait(false);
-            _ = Convert(result);
-            return true;
+            token.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Interactive fixture probe evidence is not available.");
         }
 
         private static AppLockerPolicySnapshot Convert(WindowsCommandResult result)

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
-using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Native
 {
@@ -136,7 +136,8 @@ namespace Guard.WindowsPoc.Native
             throw new InvalidOperationException("Durable journal authorization is required before payload creation.");
         }
 
-        public static ProcessStartInfo CreateStartInfo(WindowsCommand command, string? policyPath = null)
+        public static ProcessStartInfo CreateStartInfo(WindowsCommand command, string? policyPath = null,
+            string? expectedCurrentSha256 = null, string? expectedPayloadSha256 = null)
         {
             string script = command switch
             {
@@ -147,7 +148,8 @@ namespace Guard.WindowsPoc.Native
                 _ => throw new ArgumentOutOfRangeException(nameof(command))
             };
             bool mutation = command is WindowsCommand.Apply or WindowsCommand.Restore;
-            if (mutation && (policyPath is null || !policyPath.StartsWith(Root + @"\", StringComparison.Ordinal)
+            if (mutation && (policyPath is null || expectedCurrentSha256 is null || expectedPayloadSha256 is null
+                || !ValidSha(expectedCurrentSha256) || !ValidSha(expectedPayloadSha256) || !policyPath.StartsWith(Root + @"\", StringComparison.Ordinal)
                 || policyPath[(Root.Length + 1)..].Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '.' and not '-')))
             {
                 throw new ArgumentException("A confined policy payload path is required.", nameof(policyPath));
@@ -173,7 +175,12 @@ namespace Guard.WindowsPoc.Native
                 info.ArgumentList.Add(argument);
             }
 
-            if (mutation) { info.ArgumentList.Add("-PolicyPath"); info.ArgumentList.Add(policyPath!); }
+            if (mutation)
+            {
+                info.ArgumentList.Add("-PolicyPath"); info.ArgumentList.Add(policyPath!);
+                info.ArgumentList.Add("-ExpectedCurrentSha256"); info.ArgumentList.Add(expectedCurrentSha256!);
+                info.ArgumentList.Add("-ExpectedPayloadSha256"); info.ArgumentList.Add(expectedPayloadSha256!);
+            }
             return info;
         }
 
@@ -181,7 +188,7 @@ namespace Guard.WindowsPoc.Native
         {
             ArgumentNullException.ThrowIfNull(request);
             cancellationToken.ThrowIfCancellationRequested();
-            if (request.Command == WindowsCommand.Capture && request.PolicyXml is null && request.Decision is null && request.Journal is null)
+            if (request.Command == WindowsCommand.Capture && request.PolicyXml is null && request.Decision is null && request.Authorization is null)
             {
                 using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(_timeout);
@@ -194,26 +201,37 @@ namespace Guard.WindowsPoc.Native
                 return !snapshot.IsComplete ? throw new InvalidOperationException("Native inventory unavailable.") : new(snapshot);
             }
             if (request.Command is WindowsCommand.Apply or WindowsCommand.Restore && request.PolicyXml is null && request.Decision is null
-                && request.Journal is { Phase: PocJournalPhase.WritePending } journal)
+                && request.Authorization is { } authorization)
             {
+                if (request.Command == WindowsCommand.Restore != authorization.Restore)
+                {
+                    throw new InvalidOperationException("Protected mutation authorization does not match command.");
+                }
+
                 using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(_timeout);
                 string scriptPath = WindowsScriptTrustVerifier.ScriptPathFor(request.Command);
                 using IScriptTrustLease lease = _trust.Verify(scriptPath);
-                string payload = request.Command == WindowsCommand.Apply ? journal.After.LocalPolicyXml : journal.After.LocalPolicyXml;
                 string payloadPath = CreatePayloadPath();
+                FileStream? payloadLease = null;
                 try
                 {
-                    await WritePayloadIfNativeAsync(payloadPath, payload, timeout.Token).ConfigureAwait(false);
-                    ProcessStartInfo info = CreateStartInfo(request.Command, payloadPath);
+                    payloadLease = await WritePayloadIfNativeAsync(payloadPath, authorization.PayloadXml, authorization.ExpectedPayloadSha256, timeout.Token).ConfigureAwait(false);
+                    ProcessStartInfo info = CreateStartInfo(request.Command, payloadPath, authorization.ExpectedCurrentSha256, authorization.ExpectedPayloadSha256);
                     timeout.Token.ThrowIfCancellationRequested();
                     lease.Revalidate();
+                    if (payloadLease is not null) { RehashPayload(payloadLease, authorization.ExpectedPayloadSha256); }
                     string json = await _executeMutation(info, lease.Revalidate, timeout.Token).ConfigureAwait(false);
-                    return string.IsNullOrWhiteSpace(json) ? new(null) : new(ParseSnapshot(json));
+                    ValidateMutationResult(json, authorization.Restore);
+                    return new(null);
                 }
-                finally { DeletePayloadIfNative(payloadPath); }
+                finally
+                {
+                    if (payloadLease is not null) { await payloadLease.DisposeAsync().ConfigureAwait(false); }
+                    DeletePayloadIfNative(payloadPath);
+                }
             }
-            if (request.Command != WindowsCommand.Capture || request.PolicyXml is not null || request.Decision is not null || request.Journal is not null)
+            if (request.Command != WindowsCommand.Capture || request.PolicyXml is not null || request.Decision is not null || request.Authorization is not null)
             { throw new InvalidOperationException("Only trusted read-only capture is available."); }
             throw new InvalidOperationException("Only trusted read-only capture is available.");
         }
@@ -223,16 +241,22 @@ namespace Guard.WindowsPoc.Native
             return Root + @"\" + Guid.NewGuid().ToString("N") + ".xml";
         }
 
-        private static async Task WritePayloadIfNativeAsync(string path, string xml, CancellationToken token)
+        private static async Task<FileStream?> WritePayloadIfNativeAsync(string path, string xml, string expectedSha256, CancellationToken token)
         {
-            if (!OperatingSystem.IsWindows()) { return; }
+            if (!OperatingSystem.IsWindows())
+            {
+                _ = PolicyMutationDecision.Hash(xml) == expectedSha256 ? true : throw new InvalidOperationException("Policy mutation refused.");
+                return null;
+            }
             _ = Directory.CreateDirectory(Root);
-            await using FileStream stream = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            FileStream stream = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.WriteThrough);
             byte[] bytes = Encoding.UTF8.GetBytes(xml);
             if (bytes.Length > 1_000_000) { throw new InvalidOperationException("Policy mutation refused."); }
             await stream.WriteAsync(bytes, token).ConfigureAwait(false);
             await stream.FlushAsync(token).ConfigureAwait(false);
             stream.Flush(flushToDisk: true);
+            RehashPayload(stream, expectedSha256);
+            return stream;
         }
 
         private static void DeletePayloadIfNative(string path)
@@ -240,6 +264,32 @@ namespace Guard.WindowsPoc.Native
             if (!OperatingSystem.IsWindows()) { return; }
             try { File.Delete(path); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { throw new InvalidOperationException("Policy payload cleanup unavailable."); }
+        }
+
+        private static void RehashPayload(FileStream stream, string expectedSha256)
+        {
+            stream.Position = 0;
+            string actual = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+            if (!string.Equals(actual, expectedSha256, StringComparison.OrdinalIgnoreCase))
+            { throw new InvalidOperationException("Policy payload changed before launch."); }
+            stream.Position = 0;
+        }
+
+        private static bool ValidSha(string value)
+        {
+            return value.Length == 64 && value.All(char.IsAsciiHexDigit);
+        }
+
+        private static void ValidateMutationResult(string json, bool restore)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                RejectDuplicates(document.RootElement);
+                string status = RequiredText(document.RootElement, "Status");
+                if (status != (restore ? "Restored" : "Applied")) { throw new InvalidOperationException("Policy mutation refused."); }
+            }
+            catch (JsonException) { throw new InvalidOperationException("Policy mutation refused."); }
         }
 
         public static AppLockerNativeSnapshot ParseSnapshot(string json)

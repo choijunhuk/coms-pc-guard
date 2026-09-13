@@ -85,11 +85,18 @@ namespace Guard.WindowsPoc.Execution
             using CancellationTokenSource cleanup = new(TimeSpan.FromSeconds(30));
             try
             {
-                if (_hostRecoveryRequired || await store.HasHostRecoveryRequiredAsync(cleanup.Token).ConfigureAwait(false)
-                    || await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false))
+                if (_hostRecoveryRequired || await store.HasHostRecoveryRequiredAsync(cleanup.Token).ConfigureAwait(false))
                 { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 PocTransactionJournal? journal = await store.ReadAsync(cleanup.Token).ConfigureAwait(false);
-                if (journal is null) { return PocRunResult.Success; }
+                bool recoveryBarrier = await store.HasRecoveryBarrierAsync(cleanup.Token).ConfigureAwait(false);
+                if (journal is null)
+                {
+                    if (recoveryBarrier) { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
+                    return PocRunResult.Success;
+                }
+                if (recoveryBarrier && (journal.Phase == PocJournalPhase.WritePending
+                    || (journal.Phase == PocJournalPhase.Prepared && journal.Before.SamePolicy(journal.InitialBaseline))))
+                { _hostRecoveryRequired = true; return PocRunResult.HostCloneRecoveryRequired; }
                 if (journal.Phase == PocJournalPhase.HostCloneRecoveryRequired) { return PocRunResult.HostCloneRecoveryRequired; }
                 AppLockerPolicySnapshot fresh = await CaptureProtectedAsync(cleanup.Token).ConfigureAwait(false);
                 if (!fresh.IsReady(clock.GetUtcNow()) || !journal.Recognizes(fresh))

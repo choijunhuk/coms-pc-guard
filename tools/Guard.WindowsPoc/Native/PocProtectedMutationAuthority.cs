@@ -46,7 +46,7 @@ namespace Guard.WindowsPoc.Native
                 || trustedCurrent.RawLocalPolicySha256 is null || !trustedCurrent.IsReady(_clock.GetUtcNow())
                 || hostRecovery || !recoveryBarrier || !writePendingProof
                 || !_attestation.Attested || !_attestation.AllowWrite || !_elevated
-                || trustedCurrent.NativeRevision != _decision.InventoryRevision)
+                || (!restore && trustedCurrent.NativeRevision != _decision.InventoryRevision))
             {
                 throw new InvalidOperationException("Protected mutation authorization refused.");
             }

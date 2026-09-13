@@ -22,8 +22,9 @@ namespace Guard.WindowsPoc.Tests.Execution
             Assert.AreEqual(PocRunResult.Success, result);
             Assert.AreEqual(Empty, gateway.Current);
             CollectionAssert.AreEqual(new[] { First, Second, Empty }, gateway.Writes);
-            Assert.AreEqual(PocJournalPhase.Recovered, store.Value!.Phase);
-            Assert.AreEqual(Empty, store.Value.InitialBaseline);
+            PocTransactionJournal journal = store.Value ?? throw new AssertFailedException("Journal was not saved.");
+            Assert.AreEqual(PocJournalPhase.Recovered, journal.Phase);
+            Assert.AreEqual(Empty, journal.InitialBaseline);
         }
 
         [TestMethod]
@@ -120,6 +121,23 @@ namespace Guard.WindowsPoc.Tests.Execution
             gateway.Current = First;
             Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await Runner(gateway, store).RecoverAsync());
             Assert.AreEqual(0, gateway.RestoreWrites);
+        }
+
+        [TestMethod]
+        public async Task RecoveryBarrierWithRecognizedMutatedJournalStillRestoresInitialBaseline()
+        {
+            ScriptedGateway gateway = new() { Current = First };
+            MemoryJournal store = new()
+            {
+                RecoveryBarrier = true,
+                Value = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now).WithPhase(PocJournalPhase.Mutated)
+            };
+            Assert.AreEqual(PocRunResult.Success, await Runner(gateway, store).RecoverAsync());
+            Assert.AreEqual(Empty, gateway.Current);
+            Assert.AreEqual(1, gateway.RestoreWrites);
+            Assert.IsFalse(store.RecoveryBarrier);
+            PocTransactionJournal journal = store.Value ?? throw new AssertFailedException("Journal was not saved.");
+            Assert.AreEqual(PocJournalPhase.Recovered, journal.Phase);
         }
 
         [TestMethod]
@@ -242,9 +260,9 @@ namespace Guard.WindowsPoc.Tests.Execution
                     Assert.IsTrue(recovered.After.SamePolicy(Empty));
                     gateway.Store = disk;
                     WindowsPocRunner runner = new(gateway, disk, new TestGate(), new FixedClock(), "owner-proof", "lease", _ => Task.CompletedTask);
-                    Assert.AreEqual(PocRunResult.HostCloneRecoveryRequired, await runner.RecoverAsync());
-                    Assert.AreEqual(0, gateway.RestoreWrites);
-                    Assert.IsTrue(gateway.Current.SamePolicy(First));
+                    Assert.AreEqual(PocRunResult.Success, await runner.RecoverAsync());
+                    Assert.AreEqual(1, gateway.RestoreWrites);
+                    Assert.IsTrue(gateway.Current.SamePolicy(Empty));
                 }
             }
             finally { File.Delete(path); }

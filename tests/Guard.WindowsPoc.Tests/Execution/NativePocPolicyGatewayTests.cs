@@ -212,6 +212,18 @@ namespace Guard.WindowsPoc.Tests.Execution
         }
 
         [TestMethod]
+        public async Task RestoreAuthorizationAllowsRecognizedAppliedPolicyWithDifferentContentRevision()
+        {
+            PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, First, Empty, "owner-proof", "lease", Now)
+                .WithPhase(PocJournalPhase.WritePending);
+            await WithGatewayAsync(journal, CompleteFor(First.LocalPolicyXml, "E000000000000000000000000000000000000000000000000000000000000001"), async (gateway, runner) =>
+            {
+                await gateway.WriteAsync(journal, restore: true, CancellationToken.None);
+                CollectionAssert.AreEqual(new[] { WindowsCommand.Capture, WindowsCommand.Restore }, runner.Requests.Select(request => request.Command).ToArray());
+            }, savePreparedFirst: true, armRecoveryBarrier: true);
+        }
+
+        [TestMethod]
         public async Task ProductionAuthorityRejectsFixtureSwapAfterDecision()
         {
             PocTransactionJournal journal = PocTransactionJournal.Prepare(Empty, Empty, First, "owner-proof", "lease", Now)
@@ -221,6 +233,19 @@ namespace Guard.WindowsPoc.Tests.Execution
             {
                 await gateway.WriteAsync(journal, restore: false, CancellationToken.None);
             }, savePreparedFirst: true, armRecoveryBarrier: true, targetBytes: currentTargetBytes));
+        }
+
+        [TestMethod]
+        public void FixtureLeaseRejectsMemoryStreamSubstitution()
+        {
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() => FixtureLease());
+        }
+
+        [TestMethod]
+        public void FixtureLeaseRequiresIndependentPublisherVerifier()
+        {
+            _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                new PocFixtureLease(TempFixtureStream(FixtureBytes), TempFixtureStream(ControlBytes), FixtureEvidence()));
         }
 
         [TestMethod]
@@ -296,6 +321,11 @@ namespace Guard.WindowsPoc.Tests.Execution
                 NativePocPolicyGateway gateway = new(runner, Authority(lease, store, journal, targetBytes, controlBytes, capability));
                 _ = holdProtectedGate;
                 CrossProcessPolicyGate gate = new(() => new ImmediateMutex(), TimeSpan.FromSeconds(2));
+                if (holdProtectedGate)
+                {
+                    typeof(CrossProcessPolicyGate).GetField("_heldCapability", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .SetValue(gate, capability);
+                }
                 _ = await gate.RunAsync<object?>(async () =>
                 {
                     await action(gateway, runner);
@@ -310,12 +340,28 @@ namespace Guard.WindowsPoc.Tests.Execution
         {
             return new(capability ?? CapabilityForTest(), lease, store,
                 new PolicyMutationDecision(true, journal.After.LocalPolicyXml, FixturePath, FixtureHash, DecisionRevision),
-                new VmAttestationResult(true, true), elevated: true, FixtureLease(targetBytes, controlBytes), new FixedClock());
+                new VmAttestationResult(true, true), elevated: true, FileFixtureLease(targetBytes, controlBytes), new FixedClock());
         }
 
         private static PocFixtureLease FixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
         {
             return new(new MemoryStream(targetBytes ?? FixtureBytes, writable: true), new MemoryStream(controlBytes ?? ControlBytes, writable: true), FixtureEvidence());
+        }
+
+        private static PocFixtureLease FileFixtureLease(byte[]? targetBytes = null, byte[]? controlBytes = null)
+        {
+            return new(TempFixtureStream(targetBytes ?? FixtureBytes), TempFixtureStream(controlBytes ?? ControlBytes),
+                FixtureEvidence(), () => FixtureEvidence().Publisher);
+        }
+
+        private static FileStream TempFixtureStream(byte[] bytes)
+        {
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            FileStream stream = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.DeleteOnClose);
+            stream.Write(bytes);
+            stream.Flush(flushToDisk: true);
+            stream.Position = 0;
+            return stream;
         }
 
         private static PocFixtureLeaseEvidence FixtureEvidence()
@@ -324,13 +370,13 @@ namespace Guard.WindowsPoc.Tests.Execution
                 new("CN=COMS Test", "Harmless", "target.exe", new(1, 0, 0, 0), new(1, 0, 0, 0)), DecisionRevision);
         }
 
-        private static string CompleteFor(string xml)
+        private static string CompleteFor(string xml, string? revision = null)
         {
             JsonObject input = JsonNode.Parse(PowerShellCommandRunnerTests.Complete)!.AsObject();
             input["LocalPolicyXml"] = xml;
             input["EffectivePolicyXml"] = xml;
             input["RawLocalPolicySha256"] = PolicyMutationDecision.Hash(xml);
-            input["Revision"] = DecisionRevision;
+            input["Revision"] = revision ?? DecisionRevision;
             return input.ToJsonString();
         }
 

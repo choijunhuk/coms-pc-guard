@@ -24,7 +24,7 @@ namespace Guard.WindowsPoc.Recovery
         internal const string Name = @"Global\ComsPcGuard.WindowsPoc.PolicyGate";
         // READ_CONTROL is necessary to validate the opened object, in addition to wait/release.
         private const int RequiredRights = 0x120001;
-        private static readonly AsyncLocal<OwnerTokenPolicyGateCapability?> HeldCapability = new();
+        private static readonly AsyncLocal<HeldPolicyGateScope?> HeldScope = new();
         private readonly Func<IPolicyMutex> _open;
         private readonly TimeSpan _timeout;
         private readonly OwnerTokenPolicyGateCapability? _heldCapability;
@@ -53,7 +53,8 @@ namespace Guard.WindowsPoc.Recovery
         {
             ArgumentNullException.ThrowIfNull(capability);
             _ = capability.RevalidateNativePrincipal();
-            if (!ReferenceEquals(HeldCapability.Value, capability))
+            HeldPolicyGateScope? scope = HeldScope.Value;
+            if (scope is null || !scope.IsValidFor(capability))
             { throw new InvalidOperationException("Protected policy gate is not held."); }
         }
         internal static void ValidateOwner(string ownerSid)
@@ -139,11 +140,16 @@ namespace Guard.WindowsPoc.Recovery
                         cancellationToken.ThrowIfCancellationRequested();
                         mutex.Validate();
                         // Block this dedicated OS thread through lease/reload/action/acknowledgement.
-                        OwnerTokenPolicyGateCapability? previous = HeldCapability.Value;
-                        if (_heldCapability is not null) { HeldCapability.Value = _heldCapability; }
+                        HeldPolicyGateScope? previous = HeldScope.Value;
+                        HeldPolicyGateScope? current = _heldCapability is null ? null : new(_heldCapability);
+                        if (current is not null) { HeldScope.Value = current; }
                         T result;
                         try { result = action().GetAwaiter().GetResult(); }
-                        finally { HeldCapability.Value = previous; }
+                        finally
+                        {
+                            current?.Invalidate();
+                            HeldScope.Value = previous;
+                        }
                         acquired = false; mutex.Release();
                         _ = completion.TrySetResult(result);
                     }
@@ -155,6 +161,20 @@ namespace Guard.WindowsPoc.Recovery
             { IsBackground = true, Name = "Windows PoC policy gate owner" };
             owner.Start();
             return completion.Task;
+        }
+
+        private sealed class HeldPolicyGateScope(OwnerTokenPolicyGateCapability capability)
+        {
+            private readonly OwnerTokenPolicyGateCapability _capability = capability;
+            private int _valid = 1;
+            internal bool IsValidFor(OwnerTokenPolicyGateCapability capability)
+            {
+                return Volatile.Read(ref _valid) == 1 && ReferenceEquals(_capability, capability);
+            }
+            internal void Invalidate()
+            {
+                _ = Interlocked.Exchange(ref _valid, 0);
+            }
         }
 
         [SupportedOSPlatform("windows")]

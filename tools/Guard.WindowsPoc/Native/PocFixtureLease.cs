@@ -19,8 +19,8 @@ namespace Guard.WindowsPoc.Native
             _target = target ?? throw new ArgumentNullException(nameof(target));
             _control = control ?? throw new ArgumentNullException(nameof(control));
             _expected = expected ?? throw new ArgumentNullException(nameof(expected));
-            _readPublisher = readPublisher ?? (() => expected.Publisher);
-            if (!_target.CanRead || !_target.CanSeek || !_control.CanRead || !_control.CanSeek)
+            _readPublisher = readPublisher ?? throw new InvalidOperationException("Protected fixture publisher verifier is required.");
+            if (_target is not FileStream || _control is not FileStream || !_target.CanRead || !_target.CanSeek || !_control.CanRead || !_control.CanSeek)
             { throw new InvalidOperationException("Protected fixture handles must remain retained and seekable."); }
             RevalidateHashes(expected.TargetSha256, expected.ControlSha256);
         }

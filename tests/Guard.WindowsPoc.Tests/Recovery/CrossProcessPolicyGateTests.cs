@@ -113,6 +113,33 @@ namespace Guard.WindowsPoc.Tests.Recovery
         }
 
         [TestMethod]
+        public async Task HeldCapabilityCopiedToChildExecutionContextIsRevokedAfterGateRelease()
+        {
+            OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab", new string('a', 64));
+            OwnerTokenPolicyGateCapability capability = CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
+                () => new OwnerTokenAttestationContext(Owner, false, true, null));
+            using Mutex mutex = new();
+            CrossProcessPolicyGate gate = new(() => new Backend(mutex), TimeSpan.FromSeconds(2));
+            typeof(CrossProcessPolicyGate).GetField("_heldCapability", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(gate, capability);
+            TaskCompletionSource releaseChild = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task? child = null;
+
+            _ = await gate.RunAsync(() =>
+            {
+                child = Task.Run(async () =>
+                {
+                    await releaseChild.Task;
+                    CrossProcessPolicyGate.RequireHeld(capability);
+                });
+                return Task.FromResult(1);
+            }, CancellationToken.None);
+
+            releaseChild.SetResult();
+            _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(async () => await child!);
+        }
+
+        [TestMethod]
         public async Task ControllersAndWatchdogsSerializeAcrossIndependentGates()
         {
             using Mutex mutex = new();

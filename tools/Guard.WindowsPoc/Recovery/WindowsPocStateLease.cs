@@ -47,6 +47,26 @@ namespace Guard.WindowsPoc.Recovery
 
         internal bool IsBoundTo(OwnerTokenPolicyGateCapability capability) { return ReferenceEquals(_capability, capability); }
 
+        [SupportedOSPlatform("windows")]
+        internal static bool HasExistingJournal()
+        {
+            try
+            {
+                using FileStream file = new(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                FileAttributes attributes = System.IO.File.GetAttributes(file.SafeFileHandle);
+                return (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0
+                    ? true : throw Refused();
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return false;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+            {
+                throw Refused();
+            }
+        }
+
         internal static WindowsPocStateLease Open(string ownerSid, Func<IReadOnlyList<StatePathEvidence>> paths, Func<FileStream> open, Func<FileStream, StateFileEvidence> evidence)
         {
             CrossProcessPolicyGate.ValidateOwner(ownerSid);

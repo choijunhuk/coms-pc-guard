@@ -107,16 +107,31 @@ $t = GoodTask; $t.Triggers[1].Repetition.Duration = 'PT1M'; Reject { Validate-Wa
 $t = GoodTask; $t.Settings.Enabled = $false; Reject { Validate-Watchdog $t }
 
 # A prior failure that leaves any managed output, certificate or task cannot be mistaken for a fresh install.
-$controllerRoot = 'controller'; $scriptsRoot = 'scripts'; $fixtureRoot = 'fixtures'; $closurePath = 'closure'; $controllerConfigPath = 'config'; $deploymentEvidencePath = 'deployment'
-$script:managedPaths = @{}; $script:managedCertificate = $false; $script:managedTask = $false
+$applicationRoot = 'application'; $controllerRoot = 'controller'; $scriptsRoot = 'scripts'; $fixtureRoot = 'fixtures'; $closurePath = 'closure'; $controllerConfigPath = 'config'; $deploymentEvidencePath = 'deployment'; $journalPath = 'journal'
+$labRoot = 'lab'; $sourceRoot = 'source'; $dotNetRoot = 'dotnet'; $evidenceRoot = 'evidence'; $accountEvidencePath = 'account-evidence'
+$vmMarkerPath = 'vm'; $ownerProofPath = 'owner'; $memberEvidencePath = 'members'
+$script:managedPaths = @{}; $script:managedEntries = @{}; $script:managedCertificate = $false; $script:managedTask = $false
 function Test-Path { param([string] $LiteralPath) return $script:managedPaths.ContainsKey($LiteralPath) }
-function Get-ChildItem { param([string] $LiteralPath) if ($script:managedCertificate -and $LiteralPath.StartsWith('Cert:')) { return [pscustomobject]@{ Subject = $labSubject } }; return @() }
+function Get-ChildItem {
+    param([string] $LiteralPath, [switch] $Force)
+    if ($script:managedCertificate -and $LiteralPath.StartsWith('Cert:')) { return [pscustomobject]@{ Subject = $labSubject } }
+    if ($script:managedEntries.ContainsKey($LiteralPath)) { return $script:managedEntries[$LiteralPath] }
+}
 function Get-ScheduledTask { if ($script:managedTask) { return GoodTask }; return $null }
 if (Test-ManagedDeploymentArtifact) { throw 'Empty state was treated as partial.' }
 $script:managedPaths[$scriptsRoot] = $true
 if (-not (Test-ManagedDeploymentArtifact)) { throw 'Partial directory was ignored.' }
+$script:managedPaths = @{ $applicationRoot = $true }; $script:managedEntries[$applicationRoot] = [pscustomobject]@{ FullName = 'application\extra.bin' }
+if (-not (Test-ManagedDeploymentArtifact)) { throw 'Unexpected ProgramData entry was ignored.' }
+$script:managedPaths = @{ $evidenceRoot = $true }; $script:managedEntries = @{ $evidenceRoot = [pscustomobject]@{ FullName = 'evidence\old.json' } }
+if (-not (Test-ManagedDeploymentArtifact)) { throw 'Unexpected evidence entry was ignored.' }
+$script:managedPaths = @{ $labRoot = $true }; $script:managedEntries = @{ $labRoot = [pscustomobject]@{ FullName = 'lab\extra.bin' } }
+if (-not (Test-ManagedDeploymentArtifact)) { throw 'Unexpected lab-root entry was ignored.' }
 $script:managedPaths = @{}; $script:managedCertificate = $true
 if (-not (Test-ManagedDeploymentArtifact)) { throw 'Partial certificate was ignored.' }
+$script:managedCertificate = $false; $script:managedPaths[$journalPath] = $true
+if (-not (Test-ManagedDeploymentArtifact)) { throw 'Active journal was ignored.' }
+$script:managedPaths = @{}; $script:managedEntries = @{}
 $script:managedCertificate = $false; $script:managedTask = $true
 if (-not (Test-ManagedDeploymentArtifact)) { throw 'Partial watchdog was ignored.' }
 $script:managedTask = $false

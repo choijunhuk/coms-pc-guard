@@ -18,7 +18,10 @@ namespace Guard.WindowsPoc.ProvisioningHost
     {
         private const string Source = @"C:\ComsPcGuardPoc\Source";
         private const string App = @"C:\ProgramData\ComsPcGuardPoc";
+        private const string Lab = @"C:\ComsPcGuardPoc";
         private const string Fixture = @"C:\ComsPcGuardPoc\Fixtures";
+        private const string Evidence = @"C:\ComsPcGuardPoc\Evidence";
+        private const string AccountEvidence = Evidence + @"\provisioning.json";
         private const string DeploymentEvidence = @"C:\ComsPcGuardPoc\Evidence\deployment.json";
         internal const string HostPath = ProvisioningProtocol.HostPath;
         private const string ControllerPublish = Source + @"\tools\Guard.WindowsPoc\bin\Release\net10.0\win-x64\publish";
@@ -33,14 +36,18 @@ namespace Guard.WindowsPoc.ProvisioningHost
         private PocFixtureClosureLease? _closure;
         private PocConfigurationLease? _configuration;
 
-        private NativeProvisioningLease()
+        private NativeProvisioningLease(OwnerTokenPolicyGateCapability capability)
         {
+            _capability = capability ?? throw new ArgumentNullException(nameof(capability));
+            _owner = capability.OwnerSid;
             try
             {
-                // User SID is trusted only after the retained proof has passed production boundary checks.
+                CrossProcessPolicyGate.RequireHeld(capability);
+                if (WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
                 using WindowsIdentity identity = WindowsIdentity.GetCurrent(false) ?? throw new InvalidDataException();
-                _owner = identity.User?.Value ?? throw new InvalidDataException();
-                if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { throw new InvalidDataException(); }
+                OwnerTokenNativePrincipal principal = capability.RevalidateNativePrincipal();
+                if (identity.User?.Value != principal.CurrentPrincipalSid
+                    || !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { throw new InvalidDataException(); }
                 using JsonDocument vm = JsonDocument.Parse(Hold(OwnerTokenAttestation.VmMarkerPath, true));
                 using JsonDocument owner = JsonDocument.Parse(Hold(OwnerTokenAttestation.ProofPath, true));
                 using JsonDocument members = JsonDocument.Parse(Hold(App + @"\member-sids.json", true));
@@ -48,7 +55,7 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 _members = [members.RootElement.GetProperty("MemberASid").GetString() ?? "", members.RootElement.GetProperty("MemberBSid").GetString() ?? ""];
                 _ = PocConfiguration.Parse(ExpectedConfiguration());
                 if (owner.RootElement.GetProperty("OwnerSid").GetString() != _owner || owner.RootElement.GetProperty("OwnerTokenSid").GetString() != _owner) { throw new InvalidDataException(); }
-                _capability = OwnerTokenAttestation.AuthorizeNativePolicyGate(_owner, _nonce, WindowsPocOptions.AuthorizedVmName, true);
+                if (vm.RootElement.GetProperty("ExpectedVmName").GetString() != WindowsPocOptions.AuthorizedVmName) { throw new InvalidDataException(); }
                 foreach (string path in EnumerateBounded(Path.GetDirectoryName(HostPath)!)) { _ = HoldHash(path); }
                 _ = HoldHash(Source + @"\scripts\windows\Provision-ComsPocLab.ps1");
                 foreach (string path in EnumerateBounded(ControllerPublish)) { _controller.Add(Path.GetRelativePath(ControllerPublish, path), HoldHash(path)); }
@@ -70,10 +77,31 @@ namespace Guard.WindowsPoc.ProvisioningHost
             catch { Dispose(); throw; }
         }
 
-        internal static NativeProvisioningLease OpenNative() { return new(); }
+        internal static OwnerTokenPolicyGateCapability CreateCapability()
+        {
+            using FileStream ownerFile = new(OwnerTokenAttestation.ProofPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using JsonDocument owner = JsonDocument.Parse(ownerFile);
+            string ownerSid = owner.RootElement.GetProperty("OwnerSid").GetString() ?? throw new InvalidDataException();
+            CrossProcessPolicyGate.ValidateOwner(ownerSid);
+            ownerFile.Position = 0;
+            OwnerTokenAttestation.ValidateProtectedFile(ownerFile, ownerSid);
+            string ownerNonce = owner.RootElement.GetProperty("Nonce").GetString() ?? throw new InvalidDataException();
+            using FileStream vmFile = new(OwnerTokenAttestation.VmMarkerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            OwnerTokenAttestation.ValidateProtectedFile(vmFile, ownerSid);
+            using JsonDocument vm = JsonDocument.Parse(vmFile);
+            string nonce = vm.RootElement.GetProperty("Nonce").GetString() ?? throw new InvalidDataException();
+            return nonce == ownerNonce
+                && vm.RootElement.GetProperty("ExpectedVmName").GetString() == WindowsPocOptions.AuthorizedVmName
+                ? OwnerTokenAttestation.AuthorizeNativePolicyGate(ownerSid, nonce, WindowsPocOptions.AuthorizedVmName, true)
+                : throw new InvalidDataException();
+        }
+
+        internal static NativeProvisioningLease OpenNative(OwnerTokenPolicyGateCapability capability) { return new(capability); }
 
         internal void Revalidate()
         {
+            CrossProcessPolicyGate.RequireHeld(_capability);
+            if (WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
             _ = _capability.RevalidateNativePrincipal();
             using WindowsIdentity identity = WindowsIdentity.GetCurrent(false) ?? throw new InvalidDataException();
             if (identity.User?.Value != _owner || !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { throw new InvalidDataException(); }
@@ -97,7 +125,7 @@ namespace Guard.WindowsPoc.ProvisioningHost
 
         internal void ValidateDeployment()
         {
-            if (File.Exists(WindowsPocStateLease.JournalPath)) { throw new InvalidDataException(); }
+            if (WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
             _configuration ??= PocConfigurationLease.Open();
             _closure ??= PocFixtureClosureLease.Open(_owner);
             if (File.ReadAllText(PocConfiguration.Path, new UTF8Encoding(false, true)) != ExpectedConfiguration()) { throw new InvalidDataException(); }
@@ -105,16 +133,13 @@ namespace Guard.WindowsPoc.ProvisioningHost
             Dictionary<string, string> scripts = Scripts.ToDictionary(name => name, name => _held[Source + @"\scripts\windows\" + name].Hash, StringComparer.OrdinalIgnoreCase);
             VerifySet(App + @"\Scripts", scripts, false);
             VerifySet(Fixture, _fixtures, true);
-            foreach (string path in new[] { @"C:\ComsPcGuardPoc", Fixture, App, App + @"\Controller", App + @"\Scripts", @"C:\ComsPcGuardPoc\Evidence" }) { ExactAcl(path, path == Fixture); }
-            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, DeploymentEvidence })
+            VerifyDirectEntries(Lab, ("DotNet", true), ("Source", true), ("Evidence", true), ("Fixtures", true));
+            VerifyDirectEntries(Evidence, ("provisioning.json", false), ("deployment.json", false));
+            VerifyDirectEntries(App, ("Controller", true), ("Scripts", true), ("vm-attestation.json", false),
+                ("owner-attestation.json", false), ("member-sids.json", false), ("controller.json", false), ("fixture-closure.json", false));
+            foreach (string path in new[] { Lab, Fixture, App, App + @"\Controller", App + @"\Scripts", Evidence }) { ExactAcl(path, path == Fixture); }
+            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, AccountEvidence, DeploymentEvidence })
             { ExactAcl(path, false); if (!_held.ContainsKey(path)) { _ = Hold(path, true); } }
-            foreach (string path in EnumerateBounded(App))
-            {
-                if (string.Equals(path, WindowsPocStateLease.JournalPath, StringComparison.OrdinalIgnoreCase)) { continue; }
-                ExactAcl(path, false);
-                if (!_held.ContainsKey(path)) { _ = HoldHash(path); }
-            }
-            foreach (string directory in Directory.EnumerateDirectories(App, "*", SearchOption.AllDirectories)) { ExactAcl(directory, false); }
             string evidence = JsonSerializer.Serialize(new
             {
                 Version = 1,
@@ -130,7 +155,7 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 Watchdog = "ComsPcGuardPoc-Watchdog"
             });
             if (File.ReadAllText(DeploymentEvidence, new UTF8Encoding(false, true)) != evidence
-                || File.Exists(WindowsPocStateLease.JournalPath)) { throw new InvalidDataException(); }
+                || WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
             Revalidate();
         }
 
@@ -149,7 +174,31 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 // Signing changes only the two apphosts; their post-signing bytes are pinned by the production closure lease.
                 if (!(fixture && relative is "target.exe" or "control.exe") && _held[path].Hash != hash) { throw new InvalidDataException(); }
             }
-            foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)) { ExactAcl(directory, fixture); }
+            HashSet<string> expectedDirectories = new(StringComparer.OrdinalIgnoreCase);
+            foreach (string relative in expected.Keys)
+            {
+                string? directory = Path.GetDirectoryName(relative);
+                while (!string.IsNullOrEmpty(directory)) { _ = expectedDirectories.Add(directory); directory = Path.GetDirectoryName(directory); }
+            }
+            foreach (string directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
+            {
+                if (!expectedDirectories.Remove(Path.GetRelativePath(root, directory))) { throw new InvalidDataException(); }
+                ExactAcl(directory, fixture);
+            }
+            if (expectedDirectories.Count != 0) { throw new InvalidDataException(); }
+        }
+
+        private static void VerifyDirectEntries(string root, params (string Name, bool Directory)[] expected)
+        {
+            Dictionary<string, bool> remaining = expected.ToDictionary(item => item.Name, item => item.Directory, StringComparer.OrdinalIgnoreCase);
+            foreach (string path in Directory.EnumerateFileSystemEntries(root))
+            {
+                FileAttributes attributes = File.GetAttributes(path);
+                if ((attributes & FileAttributes.ReparsePoint) != 0
+                    || !remaining.Remove(Path.GetFileName(path), out bool directory)
+                    || directory != ((attributes & FileAttributes.Directory) != 0)) { throw new InvalidDataException(); }
+            }
+            if (remaining.Count != 0) { throw new InvalidDataException(); }
         }
 
         private string Hold(string path, bool input)

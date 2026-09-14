@@ -48,7 +48,7 @@ namespace Guard.WindowsPoc.Execution
                 : await new CrossProcessPolicyGate(capability).RunAsync(async () =>
             {
                 configuration.Revalidate();
-                if (!ShouldOpenJournal(command.Kind, File.Exists)) { return PocExitCode.Success; }
+                if (!ShouldOpenJournal(command.Kind, _ => WindowsPocStateLease.HasExistingJournal())) { return PocExitCode.Success; }
                 using WindowsPocStateLease state = WindowsPocStateLease.Open(capability);
                 using DurablePocJournalStore store = new(state);
                 if (command.Kind == PocCommandKind.Run && await store.ReadAsync(token).ConfigureAwait(false) is not null)

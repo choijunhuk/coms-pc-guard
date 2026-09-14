@@ -36,6 +36,8 @@ namespace Guard.WindowsPoc.Tests.Execution
             Assert.AreEqual(1, checks);
             Assert.IsTrue(PocNativeController.ShouldOpenJournal(PocCommandKind.Recover, _ => true));
             Assert.IsTrue(PocNativeController.ShouldOpenJournal(PocCommandKind.Run, _ => false));
+            _ = Assert.ThrowsExactly<UnauthorizedAccessException>(() => PocNativeController.ShouldOpenJournal(PocCommandKind.Recover,
+                _ => throw new UnauthorizedAccessException()));
         }
     }
 }

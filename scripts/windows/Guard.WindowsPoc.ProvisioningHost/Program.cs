@@ -1,5 +1,8 @@
 using System.Security.Cryptography;
+using System.Runtime.Versioning;
 using System.Text;
+using Guard.WindowsPoc.Recovery;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.ProvisioningHost
 {
@@ -15,21 +18,34 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 Console.InputEncoding = new UTF8Encoding(false, true);
                 Console.OutputEncoding = new UTF8Encoding(false, true);
                 Console.Out.NewLine = "\n";
-                using NativeProvisioningLease lease = NativeProvisioningLease.OpenNative();
-                string nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-                await Console.Out.WriteLineAsync("V1 READY " + nonce);
-                ProvisioningProtocol protocol = new();
-                for (int sequence = 0; sequence < 10; sequence++)
-                {
-                    string phase = await ReadBoundedLineAsync(Console.In);
-                    (int acceptedSequence, bool complete) = protocol.Accept(phase);
-                    lease.Revalidate();
-                    if (phase is "PROVE" or "PROTECT_END" or "TASK_END" or "COMPLETE") { lease.ValidateDeployment(); }
-                    await Console.Out.WriteLineAsync(ProvisioningProtocol.CreateAck(nonce, acceptedSequence, phase));
-                    if (complete) { return 0; }
-                }
+                return await RunWindowsAsync();
             }
             catch { return 1; } // No raw identities, exception details or stderr across this boundary.
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static async Task<int> RunWindowsAsync()
+        {
+            OwnerTokenPolicyGateCapability capability = NativeProvisioningLease.CreateCapability();
+            return await new CrossProcessPolicyGate(capability).RunAsync(() => RunProtocolAsync(capability), CancellationToken.None);
+        }
+
+        [SupportedOSPlatform("windows")]
+        private static async Task<int> RunProtocolAsync(OwnerTokenPolicyGateCapability capability)
+        {
+            using NativeProvisioningLease lease = NativeProvisioningLease.OpenNative(capability);
+            string nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            await Console.Out.WriteLineAsync("V1 READY " + nonce);
+            ProvisioningProtocol protocol = new();
+            for (int sequence = 0; sequence < 10; sequence++)
+            {
+                string phase = await ReadBoundedLineAsync(Console.In);
+                (int acceptedSequence, bool complete) = protocol.Accept(phase);
+                lease.Revalidate();
+                if (phase is "PROVE" or "PROTECT_END" or "TASK_END" or "COMPLETE") { lease.ValidateDeployment(); }
+                await Console.Out.WriteLineAsync(ProvisioningProtocol.CreateAck(nonce, acceptedSequence, phase));
+                if (complete) { return 0; }
+            }
             return 1;
         }
 

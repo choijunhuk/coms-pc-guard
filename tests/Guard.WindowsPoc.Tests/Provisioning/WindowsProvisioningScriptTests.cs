@@ -38,7 +38,8 @@ namespace Guard.WindowsPoc.Tests.Provisioning
                 "Member account is administrator", "target.exe", "control.exe", "Write-RedactedEvidence"
                 , "Assert-ExistingDeployment", "Get-RelativeFixturePath", "Validate-Watchdog", "Test-CurrentVmBinding",
                 "GetFinalPathNameByHandle", "FileShare]::Read", "Certificate policy mismatch", "Existing deployment mismatch",
-                "Test-ManagedDeploymentArtifact", "deployment.json", "X509Store", "EnvironmentVariables.Clear", "Created = $true"
+                "Test-ManagedDeploymentArtifact", "Test-UnexpectedDirectEntry", "deployment.json", "X509Store", "EnvironmentVariables.Clear",
+                "$start.EnvironmentVariables['SystemRoot'] = 'C:\\Windows'", "$start.EnvironmentVariables['TEMP'] = 'C:\\Windows\\Temp'", "Created = $true"
             }) { StringAssert.Contains(script, required); }
             foreach (string forbidden in new[] { "Password", "SecureString", "Pfx", "Export-Pfx", "Export-Certificate", "Import-Certificate", "$args", "Invoke-Expression", "http://", "https://" })
             { Assert.IsFalse(script.Contains(forbidden, StringComparison.OrdinalIgnoreCase), forbidden); }

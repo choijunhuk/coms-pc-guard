@@ -11,14 +11,19 @@ $ErrorActionPreference = 'Stop'
 $applicationRoot = 'C:\ProgramData\ComsPcGuardPoc'
 $controllerRoot = 'C:\ProgramData\ComsPcGuardPoc\Controller'
 $scriptsRoot = 'C:\ProgramData\ComsPcGuardPoc\Scripts'
+$labRoot = 'C:\ComsPcGuardPoc'
+$sourceRoot = 'C:\ComsPcGuardPoc\Source'
+$dotNetRoot = 'C:\ComsPcGuardPoc\DotNet'
 $fixtureRoot = 'C:\ComsPcGuardPoc\Fixtures'
 $evidenceRoot = 'C:\ComsPcGuardPoc\Evidence'
+$accountEvidencePath = 'C:\ComsPcGuardPoc\Evidence\provisioning.json'
 $closurePath = 'C:\ProgramData\ComsPcGuardPoc\fixture-closure.json'
 $controllerConfigPath = 'C:\ProgramData\ComsPcGuardPoc\controller.json'
 $deploymentEvidencePath = 'C:\ComsPcGuardPoc\Evidence\deployment.json'
 $vmMarkerPath = 'C:\ProgramData\ComsPcGuardPoc\vm-attestation.json'
 $ownerProofPath = 'C:\ProgramData\ComsPcGuardPoc\owner-attestation.json'
 $memberEvidencePath = 'C:\ProgramData\ComsPcGuardPoc\member-sids.json'
+$journalPath = 'C:\ProgramData\ComsPcGuardPoc\policy.journal'
 $recoveryName = 'ComsPcGuardPoc-Watchdog'
 $recoveryPath = 'C:\ProgramData\ComsPcGuardPoc\Scripts\Resume-ComsPocRecovery.ps1'
 $controllerPath = 'C:\ProgramData\ComsPcGuardPoc\Controller\Guard.WindowsPoc.exe'
@@ -56,10 +61,22 @@ function New-DirectoryExact([string] $path) {
     if (Test-Path -LiteralPath $path) { Assert-NoReparse $path; return }
     if ($PSCmdlet.ShouldProcess($path, 'Create protected directory')) { New-Item -ItemType Directory -Path $path -Force:$false -ErrorAction Stop | Out-Null }
 }
+function Test-UnexpectedDirectEntry([string] $root, [string[]] $allowedPaths) {
+    if (-not (Test-Path -LiteralPath $root)) { return $false }
+    $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $allowedPaths) { [void]$allowed.Add($path) }
+    foreach ($entry in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop)) {
+        if ($null -eq $entry -or [string]::IsNullOrWhiteSpace([string]$entry.FullName) -or -not $allowed.Contains([string]$entry.FullName)) { return $true }
+    }
+    return $false
+}
 function Test-ManagedDeploymentArtifact {
-    foreach ($path in @($controllerRoot, $scriptsRoot, $fixtureRoot, $closurePath, $controllerConfigPath, $deploymentEvidencePath)) {
+    foreach ($path in @($controllerRoot, $scriptsRoot, $fixtureRoot, $closurePath, $controllerConfigPath, $deploymentEvidencePath, $journalPath)) {
         if (Test-Path -LiteralPath $path) { return $true }
     }
+    if (Test-UnexpectedDirectEntry $applicationRoot @($vmMarkerPath, $ownerProofPath, $memberEvidencePath)) { return $true }
+    if (Test-UnexpectedDirectEntry $labRoot @($sourceRoot, $dotNetRoot, $evidenceRoot)) { return $true }
+    if (Test-UnexpectedDirectEntry $evidenceRoot @($accountEvidencePath)) { return $true }
     foreach ($storePath in @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
         if (@(Get-ChildItem -LiteralPath $storePath -ErrorAction Stop | Where-Object { $_.Subject -eq $labSubject }).Count -ne 0) { return $true }
     }
@@ -253,10 +270,12 @@ function Install-LabPublicTrust($certificate) {
             }
             if (-not $PSCmdlet.ShouldProcess("LocalMachine\\$storeName", 'Trust disposable lab public certificate')) { continue }
             $public = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
+            $intent = [pscustomobject]@{ StoreName = $storeName; Thumbprint = [string]$certificate.Thumbprint; RawData = [byte[]]$certificate.RawData; Committed = $false }
+            $script:addedTrust += $intent
             try { $store.Add($public) } finally { $public.Dispose() }
-            $script:addedTrust += [pscustomobject]@{ StoreName = $storeName; Thumbprint = [string]$certificate.Thumbprint; RawData = [byte[]]$certificate.RawData }
             $verified = @($store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certificate.Thumbprint, $false))
             if ($verified.Count -ne 1 -or $verified[0].HasPrivateKey -or [Convert]::ToBase64String($verified[0].RawData) -cne [Convert]::ToBase64String($certificate.RawData)) { Fail 'Certificate trust import mismatch.' }
+            $intent.Committed = $true
         } finally {
             $store.Close(); $store.Dispose()
         }
@@ -384,12 +403,11 @@ function Start-ProofBroker {
     $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false, $true)
     $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false, $true)
-    $systemRoot = $env:SystemRoot; $windowsRoot = $env:WINDIR; $temporary = $env:TEMP; $temporaryFallback = $env:TMP
     $start.EnvironmentVariables.Clear()
-    $start.EnvironmentVariables['SystemRoot'] = $systemRoot
-    $start.EnvironmentVariables['WINDIR'] = $windowsRoot
-    $start.EnvironmentVariables['TEMP'] = $temporary
-    $start.EnvironmentVariables['TMP'] = $temporaryFallback
+    $start.EnvironmentVariables['SystemRoot'] = 'C:\Windows'
+    $start.EnvironmentVariables['WINDIR'] = 'C:\Windows'
+    $start.EnvironmentVariables['TEMP'] = 'C:\Windows\Temp'
+    $start.EnvironmentVariables['TMP'] = 'C:\Windows\Temp'
     $script:broker = [Diagnostics.Process]::Start($start)
     $script:brokerErrorBuffer = New-Object char[] 1
     $script:brokerErrorRead = $script:broker.StandardError.ReadAsync($script:brokerErrorBuffer, 0, 1)
@@ -409,7 +427,6 @@ function Confirm-ProofPhase([string] $phase) {
 Assert-WindowsAdministrator
 if ($WhatIfPreference) { return }
 if ($PSCommandPath -cne 'C:\ComsPcGuardPoc\Source\scripts\windows\Provision-ComsPocLab.ps1') { Fail 'Fixed provisioning source path required.' }
-$sourceRoot = 'C:\ComsPcGuardPoc\Source'
 $script:broker = $null; $createdCertificate = $false; $createdTask = $false; $certificate = $null; $addedTrust = @()
 try {
     Start-ProofBroker
@@ -425,7 +442,7 @@ try {
         if (Test-ManagedDeploymentArtifact) { Fail 'Preserved partial deployment requires inspection.' }
         if ($null -ne (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction SilentlyContinue)) { Fail 'Watchdog without deployment.' }
         Confirm-ProofPhase 'PUBLISH_BEGIN'
-        New-DirectoryExact $applicationRoot; New-DirectoryExact $controllerRoot; New-DirectoryExact $scriptsRoot; New-DirectoryExact 'C:\ComsPcGuardPoc'; New-DirectoryExact $fixtureRoot; New-DirectoryExact $evidenceRoot
+        New-DirectoryExact $applicationRoot; New-DirectoryExact $controllerRoot; New-DirectoryExact $scriptsRoot; New-DirectoryExact $labRoot; New-DirectoryExact $fixtureRoot; New-DirectoryExact $evidenceRoot
         Publish-Controller $sourceRoot
         foreach ($name in @('Get-ComsPocInventory.ps1', 'Set-ComsPocPolicy.ps1', 'Remove-ComsPocPolicy.ps1', 'Test-ComsPocFixture.ps1', 'Resume-ComsPocRecovery.ps1')) { Assert-ExactFile (Join-Path $PSScriptRoot $name) (Join-Path $scriptsRoot $name) }
         Merge-FixturePublish $sourceRoot 'tools\Guard.WindowsPoc.Fixture\Guard.WindowsPoc.Fixture.csproj' 'ComsPcGuardPoc.DenyTarget.exe' 'target.exe'
@@ -451,9 +468,9 @@ try {
         }
         Get-ChildItem -LiteralPath $fixtureRoot -Force -Recurse | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid $inputs.MemberSids -Fixture }
         Set-ProtectedAcl $fixtureRoot $inputs.OwnerSid $inputs.MemberSids -Fixture
-        Get-ChildItem -LiteralPath $applicationRoot -Force -Recurse | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid @() }
+        Get-ChildItem -LiteralPath $applicationRoot -Force -Recurse | Where-Object { $_.FullName -cne $journalPath } | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid @() }
         Set-ProtectedAcl $applicationRoot $inputs.OwnerSid @()
-        Set-ProtectedAcl 'C:\ComsPcGuardPoc' $inputs.OwnerSid @()
+        Set-ProtectedAcl $labRoot $inputs.OwnerSid @()
         Confirm-ProofPhase 'PROTECT_END'
         Confirm-ProofPhase 'TASK_BEGIN'
         Install-Watchdog | Out-Null
@@ -465,11 +482,12 @@ try {
     '{"Version":1,"Status":"Verified"}'
 } catch {
     # Only artifacts created by this invocation can be untrusted/removed on failure.
+    $cleanupFailures = [Collections.Generic.List[string]]::new()
     if ($createdTask) {
         try {
             $task = Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction SilentlyContinue
             if ($null -ne $task) { Validate-Watchdog $task; Unregister-ScheduledTask -TaskName $recoveryName -TaskPath '\' -Confirm:$false }
-        } catch { } # Trust rollback below must run even when task cleanup refuses.
+        } catch { $cleanupFailures.Add('watchdog') } # Trust rollback below must run even when task cleanup refuses.
     }
     if ($null -ne $certificate -and $certificate.Thumbprint -match '^[0-9A-F]{40}$') {
         foreach ($entry in $addedTrust) {
@@ -480,12 +498,13 @@ try {
                     $matches = @($store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $entry.Thumbprint, $false))
                     if ($matches.Count -eq 1 -and [Convert]::ToBase64String($matches[0].RawData) -ceq [Convert]::ToBase64String($entry.RawData)) { $store.Remove($matches[0]) }
                 } finally { $store.Close(); $store.Dispose() }
-            } catch { }
+            } catch { $cleanupFailures.Add('trust') }
         }
         if ($createdCertificate) {
-            try { Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $certificate.Thumbprint) -ErrorAction Stop } catch { }
+            try { Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $certificate.Thumbprint) -ErrorAction Stop } catch { $cleanupFailures.Add('certificate') }
         }
     }
+    if ($cleanupFailures.Count -ne 0) { throw 'COMS PoC provisioning refused; security rollback requires manual inspection.' }
     throw 'COMS PoC provisioning refused; partial files are preserved for inspection and cannot be accepted without full proof.'
 } finally {
     if ($null -ne $script:broker) { if (-not $script:broker.HasExited) { $script:broker.Kill(); $script:broker.WaitForExit(30000) | Out-Null }; $script:broker.Dispose() }

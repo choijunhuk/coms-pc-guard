@@ -108,7 +108,8 @@ The original round-4 implementer exhausted its model usage after writing the sid
 ### Review findings addressed
 
 - The fixed provisioning sidecar now derives the protected Owner/VM capability first, acquires the production `Global\\ComsPcGuard.WindowsPoc.PolicyGate`, and retains that gate for the entire `PROVE` or full mutation protocol. Every phase requires the same held capability, so provisioning cannot race policy recovery, journal transitions, or another provisioning run.
-- Journal absence is now probed by opening the fixed path. Only `FileNotFoundException`/`DirectoryNotFoundException` mean absent; denied access, I/O failures, directories, or reparse points refuse. The mutable journal is explicitly excluded from deployment closure traversal while its existence is checked before sidecar readiness, every acknowledgement, and deployment proof.
+- The sidecar principal predicate accepts only the exact principal revalidated by the protected capability: designated Owner when the protected mutex already exists, or attested SYSTEM for first-mutex bootstrap. Unrelated administrators, mismatched capability/process identities, and non-administrator contexts refuse.
+- Journal absence is now probed from path metadata before opening the fixed path and rechecked against both the retained handle and path afterward. Only an initially missing path/parent means absent; denied access, I/O failures, directories, reparse points including dangling links, or disappearance/replacement after initial observation refuse. The mutable journal is explicitly excluded from deployment closure traversal while its existence is checked before sidecar readiness, every acknowledgement, and deployment proof.
 - Replaced the environment-controlled temporary certificate export/import with direct in-memory `X509Store.Add` of the exact public certificate bytes. Each successfully added store/thumbprint/raw-certificate tuple is recorded immediately and rollback removes only that exact tuple.
 - Certificate rollback intent is recorded before `X509Store.Add`, then marked committed only after exact store verification. Cleanup attempts every owned/pending entry and converts any rollback failure into an explicit manual-security-inspection failure instead of hiding the residue.
 - A no-op `recover --allow-write` now returns success without opening or creating an absent `policy.journal`. Provisioning refuses while a journal exists and excludes the mutable journal from immutable deployment hashes/retained handles, preventing the minute watchdog from breaking proof reruns or racing a read-only lease.
@@ -123,10 +124,10 @@ The original round-4 implementer exhausted its model usage after writing the sid
 
 ### Verification
 
-- PASS: focused provisioning/protocol/no-journal recovery tests — 8/8.
+- PASS: focused provisioning/protocol/principal/journal recovery tests — 10/10.
 - PASS: executable PowerShell provisioning contracts, including partial-state detection.
 - PASS: locked solution restore; format verification; Release build with 0 warnings and 0 errors.
-- PASS: default and `TZ=UTC` suites — Core 117, Service 148, WindowsPoc 214 passed/2 Windows-only skipped; 479 passed, 0 failed per run.
+- PASS: default and `TZ=UTC` suites — Core 117, Service 148, WindowsPoc 216 passed/2 Windows-only skipped; 481 passed, 0 failed per run.
 - PASS: win-x64 self-contained `--no-restore` publish for sidecar, controller, deny fixture and control fixture.
 - PASS: all seven PowerShell scripts parse; `git diff --check` and focused secret scan.
 - NOT_RUN_WINDOWS_ONLY: live certificate/ACL/task/sidecar phases and AppLocker acceptance remain for the disposable VM.

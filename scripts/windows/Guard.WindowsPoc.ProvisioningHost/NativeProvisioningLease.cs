@@ -12,6 +12,17 @@ using Microsoft.Win32;
 
 namespace Guard.WindowsPoc.ProvisioningHost
 {
+    internal static class ProvisioningPrincipal
+    {
+        internal static void Validate(string ownerSid, OwnerTokenNativePrincipal principal, string? processSid, bool administrator)
+        {
+            ArgumentNullException.ThrowIfNull(principal);
+            if (!administrator || principal.OwnerSid != ownerSid || principal.CurrentPrincipalSid != processSid)
+            { throw new InvalidOperationException(); }
+            _ = CrossProcessPolicyGate.ValidateCreationOwner(ownerSid, processSid);
+        }
+    }
+
     // This process survives all PowerShell phases. No paths or identity values enter over IPC.
     [SupportedOSPlatform("windows")]
     internal sealed class NativeProvisioningLease : IDisposable
@@ -46,8 +57,8 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 if (WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
                 using WindowsIdentity identity = WindowsIdentity.GetCurrent(false) ?? throw new InvalidDataException();
                 OwnerTokenNativePrincipal principal = capability.RevalidateNativePrincipal();
-                if (identity.User?.Value != principal.CurrentPrincipalSid
-                    || !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { throw new InvalidDataException(); }
+                ProvisioningPrincipal.Validate(_owner, principal, identity.User?.Value,
+                    new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator));
                 using JsonDocument vm = JsonDocument.Parse(Hold(OwnerTokenAttestation.VmMarkerPath, true));
                 using JsonDocument owner = JsonDocument.Parse(Hold(OwnerTokenAttestation.ProofPath, true));
                 using JsonDocument members = JsonDocument.Parse(Hold(App + @"\member-sids.json", true));
@@ -102,9 +113,10 @@ namespace Guard.WindowsPoc.ProvisioningHost
         {
             CrossProcessPolicyGate.RequireHeld(_capability);
             if (WindowsPocStateLease.HasExistingJournal()) { throw new InvalidDataException(); }
-            _ = _capability.RevalidateNativePrincipal();
+            OwnerTokenNativePrincipal principal = _capability.RevalidateNativePrincipal();
             using WindowsIdentity identity = WindowsIdentity.GetCurrent(false) ?? throw new InvalidDataException();
-            if (identity.User?.Value != _owner || !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { throw new InvalidDataException(); }
+            ProvisioningPrincipal.Validate(_owner, principal, identity.User?.Value,
+                new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator));
             OwnerTokenNativeVmBinding binding = OwnerTokenAttestation.ReadNativeVmBinding(_owner, _nonce, WindowsPocOptions.AuthorizedVmName);
             using RegistryKey? bios = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
             using RegistryKey? secureBoot = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");

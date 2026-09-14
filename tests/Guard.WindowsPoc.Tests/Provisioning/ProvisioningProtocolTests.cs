@@ -1,5 +1,7 @@
 using ProvisioningProgram = Guard.WindowsPoc.ProvisioningHost.Program;
+using ProvisioningPrincipal = Guard.WindowsPoc.ProvisioningHost.ProvisioningPrincipal;
 using Protocol = Guard.WindowsPoc.ProvisioningHost.ProvisioningProtocol;
+using Guard.WindowsPoc.Safety;
 
 namespace Guard.WindowsPoc.Tests.Provisioning
 {
@@ -57,6 +59,28 @@ namespace Guard.WindowsPoc.Tests.Provisioning
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => Protocol.CreateAck(new string('G', 64), 0, "PROVE"));
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => Protocol.CreateAck(nonce, 10, "PROVE"));
             _ = Assert.ThrowsExactly<InvalidOperationException>(() => Protocol.CreateAck(nonce, 0, "PROVE\n"));
+        }
+
+        [TestMethod]
+        public void ProvisioningPrincipalAcceptsOnlyTheCapabilityValidatedOwnerOrSystem()
+        {
+            const string owner = "S-1-5-21-" + "1-2-3-1001";
+            const string other = "S-1-5-21-" + "1-2-3-1002";
+            const string system = "S-1-5-18";
+            ProvisioningPrincipal.Validate(owner, new(owner, owner), owner, true);
+            ProvisioningPrincipal.Validate(owner, new(owner, system), system, true);
+
+            foreach ((OwnerTokenNativePrincipal principal, string? processSid, bool administrator) in new[]
+            {
+                (new OwnerTokenNativePrincipal(owner, owner), other, true),
+                (new OwnerTokenNativePrincipal(owner, system), owner, true),
+                (new OwnerTokenNativePrincipal(other, owner), owner, true),
+                (new OwnerTokenNativePrincipal(owner, owner), owner, false)
+            })
+            {
+                _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
+                    ProvisioningPrincipal.Validate(owner, principal, processSid, administrator));
+            }
         }
     }
 }

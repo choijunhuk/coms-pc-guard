@@ -50,18 +50,40 @@ namespace Guard.WindowsPoc.Recovery
         [SupportedOSPlatform("windows")]
         internal static bool HasExistingJournal()
         {
+            return HasExistingJournal(() => System.IO.File.GetAttributes(JournalPath),
+                () => new FileStream(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite),
+                file => System.IO.File.GetAttributes(file.SafeFileHandle));
+        }
+
+        internal static bool HasExistingJournal(Func<FileAttributes> pathAttributes, Func<FileStream> open,
+            Func<FileStream, FileAttributes> openedAttributes)
+        {
+            ArgumentNullException.ThrowIfNull(pathAttributes);
+            ArgumentNullException.ThrowIfNull(open);
+            ArgumentNullException.ThrowIfNull(openedAttributes);
+            FileAttributes before;
             try
             {
-                using FileStream file = new(JournalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                FileAttributes attributes = System.IO.File.GetAttributes(file.SafeFileHandle);
-                return (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0
-                    ? true : throw Refused();
+                before = pathAttributes();
             }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
                 return false;
             }
             catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+            {
+                throw Refused();
+            }
+            ValidateJournalAttributes(before);
+            try
+            {
+                using FileStream file = open();
+                ValidateJournalAttributes(openedAttributes(file));
+                ValidateJournalAttributes(pathAttributes());
+                return true;
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException
+                or UnauthorizedAccessException or IOException)
             {
                 throw Refused();
             }
@@ -122,6 +144,11 @@ namespace Guard.WindowsPoc.Recovery
         {
             if (paths.Count == 0 || paths.Any(path => path.ReparsePoint || !path.AclKnown || path.UntrustedRights
                 || (path.Owner != "S-1-5-18" && path.Owner != ownerSid))) { throw Refused(); }
+        }
+
+        private static void ValidateJournalAttributes(FileAttributes attributes)
+        {
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0) { throw Refused(); }
         }
 
         [SupportedOSPlatform("windows")]

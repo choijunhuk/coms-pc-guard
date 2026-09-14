@@ -14,9 +14,12 @@ $scriptsRoot = 'C:\ProgramData\ComsPcGuardPoc\Scripts'
 $labRoot = 'C:\ComsPcGuardPoc'
 $sourceRoot = 'C:\ComsPcGuardPoc\Source'
 $dotNetRoot = 'C:\ComsPcGuardPoc\DotNet'
+$dotNetHomeRoot = 'C:\ComsPcGuardPoc\.dotnet-home'
+$nugetRoot = 'C:\ComsPcGuardPoc\.nuget'
 $fixtureRoot = 'C:\ComsPcGuardPoc\Fixtures'
 $evidenceRoot = 'C:\ComsPcGuardPoc\Evidence'
 $accountEvidencePath = 'C:\ComsPcGuardPoc\Evidence\provisioning.json'
+$sourceEvidencePath = 'C:\ComsPcGuardPoc\Evidence\source-install.json'
 $closurePath = 'C:\ProgramData\ComsPcGuardPoc\fixture-closure.json'
 $controllerConfigPath = 'C:\ProgramData\ComsPcGuardPoc\controller.json'
 $deploymentEvidencePath = 'C:\ComsPcGuardPoc\Evidence\deployment.json'
@@ -75,8 +78,8 @@ function Test-ManagedDeploymentArtifact {
         if (Test-Path -LiteralPath $path) { return $true }
     }
     if (Test-UnexpectedDirectEntry $applicationRoot @($vmMarkerPath, $ownerProofPath, $memberEvidencePath)) { return $true }
-    if (Test-UnexpectedDirectEntry $labRoot @($sourceRoot, $dotNetRoot, $evidenceRoot)) { return $true }
-    if (Test-UnexpectedDirectEntry $evidenceRoot @($accountEvidencePath)) { return $true }
+    if (Test-UnexpectedDirectEntry $labRoot @($sourceRoot, $dotNetRoot, $dotNetHomeRoot, $nugetRoot, $evidenceRoot)) { return $true }
+    if (Test-UnexpectedDirectEntry $evidenceRoot @($accountEvidencePath, $sourceEvidencePath)) { return $true }
     foreach ($storePath in @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
         if (@(Get-ChildItem -LiteralPath $storePath -ErrorAction Stop | Where-Object { $_.Subject -eq $labSubject }).Count -ne 0) { return $true }
     }

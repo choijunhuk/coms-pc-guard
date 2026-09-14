@@ -33,6 +33,7 @@ namespace Guard.WindowsPoc.ProvisioningHost
         private const string Fixture = @"C:\ComsPcGuardPoc\Fixtures";
         private const string Evidence = @"C:\ComsPcGuardPoc\Evidence";
         private const string AccountEvidence = Evidence + @"\provisioning.json";
+        private const string SourceEvidence = Evidence + @"\source-install.json";
         private const string DeploymentEvidence = @"C:\ComsPcGuardPoc\Evidence\deployment.json";
         internal const string HostPath = ProvisioningProtocol.HostPath;
         private const string ControllerPublish = Source + @"\tools\Guard.WindowsPoc\bin\Release\net10.0\win-x64\publish";
@@ -145,12 +146,13 @@ namespace Guard.WindowsPoc.ProvisioningHost
             Dictionary<string, string> scripts = Scripts.ToDictionary(name => name, name => _held[Source + @"\scripts\windows\" + name].Hash, StringComparer.OrdinalIgnoreCase);
             VerifySet(App + @"\Scripts", scripts, false);
             VerifySet(Fixture, _fixtures, true);
-            VerifyDirectEntries(Lab, ("DotNet", true), ("Source", true), ("Evidence", true), ("Fixtures", true));
-            VerifyDirectEntries(Evidence, ("provisioning.json", false), ("deployment.json", false));
+            VerifyDirectEntries(Lab, (".dotnet-home", true), (".nuget", true), ("DotNet", true), ("Source", true),
+                ("Evidence", true), ("Fixtures", true));
+            VerifyDirectEntries(Evidence, ("provisioning.json", false), ("source-install.json", false), ("deployment.json", false));
             VerifyDirectEntries(App, ("Controller", true), ("Scripts", true), ("vm-attestation.json", false),
                 ("owner-attestation.json", false), ("member-sids.json", false), ("controller.json", false), ("fixture-closure.json", false));
             foreach (string path in new[] { Lab, Fixture, App, App + @"\Controller", App + @"\Scripts", Evidence }) { ExactAcl(path, path == Fixture); }
-            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, AccountEvidence, DeploymentEvidence })
+            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, AccountEvidence, SourceEvidence, DeploymentEvidence })
             { ExactAcl(path, false); if (!_held.ContainsKey(path)) { _ = Hold(path, true); } }
             string evidence = JsonSerializer.Serialize(new
             {

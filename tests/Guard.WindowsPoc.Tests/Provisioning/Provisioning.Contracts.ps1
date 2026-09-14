@@ -108,7 +108,7 @@ $t = GoodTask; $t.Settings.Enabled = $false; Reject { Validate-Watchdog $t }
 
 # A prior failure that leaves any managed output, certificate or task cannot be mistaken for a fresh install.
 $applicationRoot = 'application'; $controllerRoot = 'controller'; $scriptsRoot = 'scripts'; $fixtureRoot = 'fixtures'; $closurePath = 'closure'; $controllerConfigPath = 'config'; $deploymentEvidencePath = 'deployment'; $journalPath = 'journal'
-$labRoot = 'lab'; $sourceRoot = 'source'; $dotNetRoot = 'dotnet'; $evidenceRoot = 'evidence'; $accountEvidencePath = 'account-evidence'
+$labRoot = 'lab'; $sourceRoot = 'source'; $dotNetRoot = 'dotnet'; $dotNetHomeRoot = 'dotnet-home'; $nugetRoot = 'nuget'; $evidenceRoot = 'evidence'; $accountEvidencePath = 'account-evidence'; $sourceEvidencePath = 'source-evidence'
 $vmMarkerPath = 'vm'; $ownerProofPath = 'owner'; $memberEvidencePath = 'members'
 $script:managedPaths = @{}; $script:managedEntries = @{}; $script:managedCertificate = $false; $script:managedTask = $false
 function Test-Path { param([string] $LiteralPath) return $script:managedPaths.ContainsKey($LiteralPath) }
@@ -119,6 +119,14 @@ function Get-ChildItem {
 }
 function Get-ScheduledTask { if ($script:managedTask) { return GoodTask }; return $null }
 if (Test-ManagedDeploymentArtifact) { throw 'Empty state was treated as partial.' }
+$script:managedPaths = @{ $applicationRoot = $true; $labRoot = $true; $evidenceRoot = $true }
+$script:managedEntries = @{
+    $applicationRoot = @([pscustomobject]@{ FullName = $vmMarkerPath }, [pscustomobject]@{ FullName = $ownerProofPath }, [pscustomobject]@{ FullName = $memberEvidencePath })
+    $labRoot = @([pscustomobject]@{ FullName = $sourceRoot }, [pscustomobject]@{ FullName = $dotNetRoot }, [pscustomobject]@{ FullName = $dotNetHomeRoot }, [pscustomobject]@{ FullName = $nugetRoot }, [pscustomobject]@{ FullName = $evidenceRoot })
+    $evidenceRoot = @([pscustomobject]@{ FullName = $accountEvidencePath }, [pscustomobject]@{ FullName = $sourceEvidencePath })
+}
+if (Test-ManagedDeploymentArtifact) { throw 'Exact prerequisite evidence was treated as partial.' }
+$script:managedPaths = @{}; $script:managedEntries = @{}
 $script:managedPaths[$scriptsRoot] = $true
 if (-not (Test-ManagedDeploymentArtifact)) { throw 'Partial directory was ignored.' }
 $script:managedPaths = @{ $applicationRoot = $true }; $script:managedEntries[$applicationRoot] = [pscustomobject]@{ FullName = 'application\extra.bin' }

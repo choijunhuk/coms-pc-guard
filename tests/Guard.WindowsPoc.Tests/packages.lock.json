@@ -143,6 +143,12 @@
           "Guard.Service": "[1.0.0, )"
         }
       },
+      "guard.windowspoc.provisioninghost": {
+        "type": "Project",
+        "dependencies": {
+          "Guard.WindowsPoc": "[1.0.0, )"
+        }
+      },
       "Microsoft.Data.Sqlite": {
         "type": "CentralTransitive",
         "requested": "[10.0.12, )",

@@ -4,6 +4,22 @@ namespace Guard.WindowsPoc.Tests.Provisioning
     public sealed class WindowsProvisioningScriptTests
     {
         [TestMethod]
+        public void ExecutableProvisioningContractsRejectMutatedDefinitions()
+        {
+            DirectoryInfo? root = new(AppContext.BaseDirectory);
+            while (root is not null && !File.Exists(Path.Combine(root.FullName, "ComsPcGuard.sln"))) { root = root.Parent; }
+            Assert.IsNotNull(root);
+            System.Diagnostics.ProcessStartInfo start = new(OperatingSystem.IsWindows() ? "powershell.exe" : "pwsh")
+            { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(root.FullName, "tests/Guard.WindowsPoc.Tests/Provisioning/Provisioning.Contracts.ps1"), "-RepositoryRoot", root.FullName }) { start.ArgumentList.Add(argument); }
+            using System.Diagnostics.Process process = System.Diagnostics.Process.Start(start)!;
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000)) { process.Kill(true); Assert.Fail("Provisioning contract timeout."); }
+            Assert.AreEqual(0, process.ExitCode, output.GetAwaiter().GetResult() + error.GetAwaiter().GetResult());
+        }
+
+        [TestMethod]
         public void ProvisionerHasFixedSecretFreeProtectedDeploymentContract()
         {
             string script = ReadScript("Provision-ComsPocLab.ps1");

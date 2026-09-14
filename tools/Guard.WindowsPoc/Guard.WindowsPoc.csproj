@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/Guard.Service/Guard.Service.csproj" /></ItemGroup>
   <ItemGroup><InternalsVisibleTo Include="Guard.WindowsPoc.Tests" /></ItemGroup>
+  <ItemGroup><InternalsVisibleTo Include="Guard.WindowsPoc.ProvisioningHost" /></ItemGroup>
 </Project>

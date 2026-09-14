@@ -47,6 +47,12 @@
           "Microsoft.Data.Sqlite": "[10.0.12, )"
         }
       },
+      "guard.windowspoc": {
+        "type": "Project",
+        "dependencies": {
+          "Guard.Service": "[1.0.0, )"
+        }
+      },
       "Microsoft.Data.Sqlite": {
         "type": "CentralTransitive",
         "requested": "[10.0.12, )",

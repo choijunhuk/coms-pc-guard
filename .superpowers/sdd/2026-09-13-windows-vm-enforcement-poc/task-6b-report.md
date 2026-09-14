@@ -69,3 +69,36 @@
 - Existing-deployment proof now checks the exact signed certificate against LocalMachine My/Root/TrustedPublisher, code-signing EKU, SHA-256, non-exportability, provider, key size, and short validity before accepting a rerun.
 - ACL application now immediately verifies SYSTEM ownership, protected inheritance, SYSTEM write capability, exact Owner read-only capability, fixture-only Member read/execute, no broad write rights, and no reparse points; existing deployment recursively revalidates controller, scripts, fixtures, configs and evidence boundaries.
 - NOT_RUN_WINDOWS_ONLY: actual Windows ACL/store/task/firmware execution remains deferred to the disposable VM.
+
+## Fix round 4
+
+The original round-4 implementer exhausted its model usage after writing the sidecar and protocol tests, before formatting, RID publication, reporting, or commit. The leader resumed the exact working tree, preserved the implementation, fixed only verification failures, and completed the gates below.
+
+### Architecture and addressed findings
+
+- Added the fixed-path, no-argument `Guard.WindowsPoc.ProvisioningHost` net10 sidecar. Windows PowerShell 5.1 launches it with redirected strict UTF-8 stdio and may send only the fixed ordered phases `PROVE/COMPLETE` or `PUBLISH_BEGIN..COMPLETE`.
+- The sidecar remains alive through every provisioning phase and owns retained handles for the protected VM/Owner/member inputs, source provisioner and scripts, sidecar closure, controller publish closure, and both fixture publish closures. Every phase revalidates the production Owner/VM capability, live manufacturer/model/UUID/BIOS/Secure Boot binding, final handle paths, ACL boundaries, hashes, configuration, and fixture closure.
+- Existing deployment proof now enters the sidecar's `PROVE` flow before PowerShell can report success. It verifies exact controller/scripts/fixture file sets and hashes, complete closure/config/evidence bytes, production closure/signature evidence, recursive protected ACLs, and then PowerShell verifies the exact private-key certificate/store trust and complete watchdog definition.
+- First deployment uses the full phase flow, with proof acknowledgements before and after publish, signature/configuration, ACL protection, and task registration. Protocol lines are ASCII-only, bounded, nonce/sequence-bound, timeout-bounded, and stderr-free; malformed order, overlong data, EOF, or sidecar death refuses.
+- PowerShell ACL verification now compares the owner as a `SecurityIdentifier`, uses primitive mutation rights rather than composite `Modify`/`FullControl` overlap, and requires exact SYSTEM/Owner/Member allow rules. Watchdog validation checks the exact root path, action, arguments, working directory, SYSTEM service-account principal, startup and one-minute time triggers, and execution settings; removal reuses the same full validator.
+- Certificate proof resolves the Authenticode thumbprint to the actual LocalMachine My certificate with its private key, verifies non-exportability/provider/key size/SHA-256/code-signing EKU/short lifetime, and matches exact public certificates in Root and TrustedPublisher.
+- Fixture runtime/deps traversal is StrictMode-safe and closure creation requires the observed set to equal the two prepublished source closures, with missing/extra/reparse/external probing or runtime configuration refused.
+- `-WhatIf` still returns before broker startup or mutation. A failed first deployment removes only a task/certificate/trust entry created by that invocation; partial files remain untrusted and force refusal on rerun.
+
+### Leader completion fixes
+
+- Corrected seven formatter/analyzer findings in the new sidecar and protocol test without changing behavior.
+- Declared `win-x64` runtime support through the sidecar's Core/Service/WindowsPoc project graph and made self-contained behavior conditional on a win-x64 publish. Regenerated the exact package locks so both solution locked restore and `--no-restore` publish succeed.
+- Verified that no password, private key, GitHub credential, or lab secret filename/value entered the tracked provisioning changes.
+
+### Verification
+
+- PASS: `/Users/choi/.dotnet/dotnet test tests/Guard.WindowsPoc.Tests/Guard.WindowsPoc.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~Provisioning"` — 5/5.
+- PASS: `/opt/homebrew/bin/pwsh -NoProfile -NonInteractive -File tests/Guard.WindowsPoc.Tests/Provisioning/Provisioning.Contracts.ps1 -RepositoryRoot "$PWD"` — `Executable provisioning contracts passed`.
+- PASS: `/Users/choi/.dotnet/dotnet restore ComsPcGuard.sln --locked-mode` after one intentional `--force-evaluate` lock regeneration.
+- PASS: `/Users/choi/.dotnet/dotnet format ComsPcGuard.sln --verify-no-changes --no-restore`.
+- PASS: `/Users/choi/.dotnet/dotnet build ComsPcGuard.sln -c Release --no-restore` — 0 warnings, 0 errors.
+- PASS: default and `TZ=UTC` full suites — Core 117, Service 148, WindowsPoc 211 passed/2 Windows-only skipped; 476 passed, 0 failed per run.
+- PASS: win-x64 self-contained `--no-restore` publish for ProvisioningHost, Guard.WindowsPoc controller, deny target fixture, and publisher control fixture.
+- PASS: PowerShell AST parse for all seven tracked `scripts/windows/*.ps1` files; `git diff --check`; focused secret scan.
+- NOT_RUN_WINDOWS_ONLY: live sidecar Owner/VM/ACL/certificate/store/task execution and native AppLocker acceptance remain for the disposable VM.

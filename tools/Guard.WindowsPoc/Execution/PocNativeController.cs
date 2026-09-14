@@ -48,6 +48,7 @@ namespace Guard.WindowsPoc.Execution
                 : await new CrossProcessPolicyGate(capability).RunAsync(async () =>
             {
                 configuration.Revalidate();
+                if (!ShouldOpenJournal(command.Kind, File.Exists)) { return PocExitCode.Success; }
                 using WindowsPocStateLease state = WindowsPocStateLease.Open(capability);
                 using DurablePocJournalStore store = new(state);
                 if (command.Kind == PocCommandKind.Run && await store.ReadAsync(token).ConfigureAwait(false) is not null)
@@ -75,6 +76,12 @@ namespace Guard.WindowsPoc.Execution
                 { await output.WriteLineAsync(JsonSerializer.Serialize(new { Status = result.ToString(), Tpm = "BLOCKED_TPM_NEM" })).ConfigureAwait(false); }
                 return result == PocRunResult.Success ? PocExitCode.Success : PocExitCode.Refused;
             }, token).ConfigureAwait(false);
+        }
+
+        internal static bool ShouldOpenJournal(PocCommandKind command, Func<string, bool> exists)
+        {
+            ArgumentNullException.ThrowIfNull(exists);
+            return command != PocCommandKind.Recover || exists(WindowsPocStateLease.JournalPath);
         }
 
         internal static VmAttestationResult Attest(PocConfigurationLease configuration, OwnerTokenPolicyGateCapability capability)

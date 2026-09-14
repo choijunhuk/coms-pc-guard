@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Guard.WindowsPoc.Configuration;
 using Guard.WindowsPoc.Native;
+using Guard.WindowsPoc.Recovery;
 using Guard.WindowsPoc.Safety;
 using Microsoft.Win32;
 
@@ -18,7 +19,8 @@ namespace Guard.WindowsPoc.ProvisioningHost
         private const string Source = @"C:\ComsPcGuardPoc\Source";
         private const string App = @"C:\ProgramData\ComsPcGuardPoc";
         private const string Fixture = @"C:\ComsPcGuardPoc\Fixtures";
-        internal const string HostPath = Source + @"\scripts\windows\Guard.WindowsPoc.ProvisioningHost\bin\Release\net10.0\win-x64\publish\Guard.WindowsPoc.ProvisioningHost.exe";
+        private const string DeploymentEvidence = @"C:\ComsPcGuardPoc\Evidence\deployment.json";
+        internal const string HostPath = ProvisioningProtocol.HostPath;
         private const string ControllerPublish = Source + @"\tools\Guard.WindowsPoc\bin\Release\net10.0\win-x64\publish";
         private static readonly string[] Scripts = ["Get-ComsPocInventory.ps1", "Set-ComsPocPolicy.ps1", "Remove-ComsPocPolicy.ps1", "Test-ComsPocFixture.ps1", "Resume-ComsPocRecovery.ps1"];
         private readonly Dictionary<string, (FileStream Stream, string Hash, bool Input)> _held = new(StringComparer.OrdinalIgnoreCase);
@@ -95,6 +97,7 @@ namespace Guard.WindowsPoc.ProvisioningHost
 
         internal void ValidateDeployment()
         {
+            if (File.Exists(WindowsPocStateLease.JournalPath)) { throw new InvalidDataException(); }
             _configuration ??= PocConfigurationLease.Open();
             _closure ??= PocFixtureClosureLease.Open(_owner);
             if (File.ReadAllText(PocConfiguration.Path, new UTF8Encoding(false, true)) != ExpectedConfiguration()) { throw new InvalidDataException(); }
@@ -103,10 +106,11 @@ namespace Guard.WindowsPoc.ProvisioningHost
             VerifySet(App + @"\Scripts", scripts, false);
             VerifySet(Fixture, _fixtures, true);
             foreach (string path in new[] { @"C:\ComsPcGuardPoc", Fixture, App, App + @"\Controller", App + @"\Scripts", @"C:\ComsPcGuardPoc\Evidence" }) { ExactAcl(path, path == Fixture); }
-            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, @"C:\ComsPcGuardPoc\Evidence\provisioning.json" })
+            foreach (string path in new[] { OwnerTokenAttestation.VmMarkerPath, OwnerTokenAttestation.ProofPath, App + @"\member-sids.json", PocConfiguration.Path, PocFixtureClosureManifest.ManifestPath, DeploymentEvidence })
             { ExactAcl(path, false); if (!_held.ContainsKey(path)) { _ = Hold(path, true); } }
             foreach (string path in EnumerateBounded(App))
             {
+                if (string.Equals(path, WindowsPocStateLease.JournalPath, StringComparison.OrdinalIgnoreCase)) { continue; }
                 ExactAcl(path, false);
                 if (!_held.ContainsKey(path)) { _ = HoldHash(path); }
             }
@@ -125,7 +129,8 @@ namespace Guard.WindowsPoc.ProvisioningHost
                 ControlSourceHash = _fixtures["control.exe"],
                 Watchdog = "ComsPcGuardPoc-Watchdog"
             });
-            if (File.ReadAllText(@"C:\ComsPcGuardPoc\Evidence\provisioning.json", new UTF8Encoding(false, true)) != evidence) { throw new InvalidDataException(); }
+            if (File.ReadAllText(DeploymentEvidence, new UTF8Encoding(false, true)) != evidence
+                || File.Exists(WindowsPocStateLease.JournalPath)) { throw new InvalidDataException(); }
             Revalidate();
         }
 

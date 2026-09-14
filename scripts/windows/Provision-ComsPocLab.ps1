@@ -15,6 +15,7 @@ $fixtureRoot = 'C:\ComsPcGuardPoc\Fixtures'
 $evidenceRoot = 'C:\ComsPcGuardPoc\Evidence'
 $closurePath = 'C:\ProgramData\ComsPcGuardPoc\fixture-closure.json'
 $controllerConfigPath = 'C:\ProgramData\ComsPcGuardPoc\controller.json'
+$deploymentEvidencePath = 'C:\ComsPcGuardPoc\Evidence\deployment.json'
 $vmMarkerPath = 'C:\ProgramData\ComsPcGuardPoc\vm-attestation.json'
 $ownerProofPath = 'C:\ProgramData\ComsPcGuardPoc\owner-attestation.json'
 $memberEvidencePath = 'C:\ProgramData\ComsPcGuardPoc\member-sids.json'
@@ -54,6 +55,15 @@ function Assert-ExactFile([string] $source, [string] $destination) {
 function New-DirectoryExact([string] $path) {
     if (Test-Path -LiteralPath $path) { Assert-NoReparse $path; return }
     if ($PSCmdlet.ShouldProcess($path, 'Create protected directory')) { New-Item -ItemType Directory -Path $path -Force:$false -ErrorAction Stop | Out-Null }
+}
+function Test-ManagedDeploymentArtifact {
+    foreach ($path in @($controllerRoot, $scriptsRoot, $fixtureRoot, $closurePath, $controllerConfigPath, $deploymentEvidencePath)) {
+        if (Test-Path -LiteralPath $path) { return $true }
+    }
+    foreach ($storePath in @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
+        if (@(Get-ChildItem -LiteralPath $storePath -ErrorAction Stop | Where-Object { $_.Subject -eq $labSubject }).Count -ne 0) { return $true }
+    }
+    return $null -ne (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction SilentlyContinue)
 }
 function Get-RelativeFixturePath([string] $root, [string] $path) {
     $prefix = $root.TrimEnd('\') + '\'
@@ -210,10 +220,11 @@ function Get-LabCertificate {
     if ($existing.Count -eq 1) {
         $certificate = $existing[0]
         Assert-LabCertificate $certificate
-        return $certificate
+        return [pscustomobject]@{ Certificate = $certificate; Created = $false }
     }
     if (-not $PSCmdlet.ShouldProcess('LocalMachine certificate store', 'Create non-exportable disposable lab code-signing certificate')) { return $null }
-    return New-SelfSignedCertificate -Type CodeSigningCert -Subject $labSubject -CertStoreLocation 'Cert:\LocalMachine\My' -KeyExportPolicy NonExportable -Provider 'Microsoft Enhanced RSA and AES Cryptographic Provider' -KeyLength 3072 -KeySpec Signature -NotBefore (Get-Date).AddMinutes(-1) -NotAfter (Get-Date).AddDays(6) -HashAlgorithm SHA256 -ErrorAction Stop
+    $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject $labSubject -CertStoreLocation 'Cert:\LocalMachine\My' -KeyExportPolicy NonExportable -Provider 'Microsoft Enhanced RSA and AES Cryptographic Provider' -KeyLength 3072 -KeySpec Signature -NotBefore (Get-Date).AddMinutes(-1) -NotAfter (Get-Date).AddDays(6) -HashAlgorithm SHA256 -ErrorAction Stop
+    return [pscustomobject]@{ Certificate = $certificate; Created = $true }
 }
 function Sign-Fixtures($certificate) {
     foreach ($path in @((Join-Path $fixtureRoot 'target.exe'), (Join-Path $fixtureRoot 'control.exe'))) {
@@ -230,14 +241,25 @@ function Assert-FixtureIdentities {
     if ($info[0].Publisher.BinaryName -eq $info[1].Publisher.BinaryName -or $info[0].Publisher.ProductName -eq $info[1].Publisher.ProductName -or $info[0].Publisher.PublisherName -ne $info[1].Publisher.PublisherName) { Fail 'Fixture identities are not same-publisher and distinct-product/binary.' }
 }
 function Install-LabPublicTrust($certificate) {
-    $publicCertificatePath = Join-Path $env:TEMP 'ComsPcGuardPoc-lab-signing.cer'
-    if (Test-Path -LiteralPath $publicCertificatePath) { Fail 'Stale public certificate staging file.' }
-    try {
-        Export-Certificate -Cert $certificate -FilePath $publicCertificatePath -Force:$false -ErrorAction Stop | Out-Null
-        Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation 'Cert:\LocalMachine\Root' -ErrorAction Stop | Out-Null
-        Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' -ErrorAction Stop | Out-Null
-    } finally {
-        if (Test-Path -LiteralPath $publicCertificatePath) { Remove-Item -LiteralPath $publicCertificatePath -Force -ErrorAction Stop }
+    foreach ($storeName in @('Root', 'TrustedPublisher')) {
+        $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, [Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+        try {
+            $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            $matches = @($store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certificate.Thumbprint, $false))
+            if ($matches.Count -gt 1) { Fail 'Ambiguous certificate trust binding.' }
+            if ($matches.Count -eq 1) {
+                if ($matches[0].HasPrivateKey -or [Convert]::ToBase64String($matches[0].RawData) -cne [Convert]::ToBase64String($certificate.RawData)) { Fail 'Certificate trust binding mismatch.' }
+                continue
+            }
+            if (-not $PSCmdlet.ShouldProcess("LocalMachine\\$storeName", 'Trust disposable lab public certificate')) { continue }
+            $public = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
+            try { $store.Add($public) } finally { $public.Dispose() }
+            $script:addedTrust += [pscustomobject]@{ StoreName = $storeName; Thumbprint = [string]$certificate.Thumbprint; RawData = [byte[]]$certificate.RawData }
+            $verified = @($store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certificate.Thumbprint, $false))
+            if ($verified.Count -ne 1 -or $verified[0].HasPrivateKey -or [Convert]::ToBase64String($verified[0].RawData) -cne [Convert]::ToBase64String($certificate.RawData)) { Fail 'Certificate trust import mismatch.' }
+        } finally {
+            $store.Close(); $store.Dispose()
+        }
     }
 }
 function Validate-FixtureRuntimeClosure([string] $runtimeConfigPath, [string] $depsPath, $files) {
@@ -296,14 +318,20 @@ function Install-Watchdog {
     $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Compatibility Win8 -Priority 7 -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
     $task = Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction SilentlyContinue
+    $created = $false
     if ($null -eq $task) {
-        if ($PSCmdlet.ShouldProcess($recoveryName, 'Register protected SYSTEM recovery watchdog')) { Register-ScheduledTask -TaskName $recoveryName -TaskPath '\' -Action $action -Trigger @($startup, $minute) -Principal $principal -Settings $settings -ErrorAction Stop | Out-Null }
+        if ($PSCmdlet.ShouldProcess($recoveryName, 'Register protected SYSTEM recovery watchdog')) {
+            Register-ScheduledTask -TaskName $recoveryName -TaskPath '\' -Action $action -Trigger @($startup, $minute) -Principal $principal -Settings $settings -ErrorAction Stop | Out-Null
+            $created = $true
+            $script:createdTask = $true
+        }
         $task = Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction Stop
     }
     Validate-Watchdog $task
+    return [pscustomobject]@{ Task = $task; Created = $created }
 }
 function Write-RedactedEvidence {
-    $path = Join-Path $evidenceRoot 'provisioning.json'
+    $path = $deploymentEvidencePath
     $json = [ordered]@{ Version = 1; Status = 'Provisioned'; ControllerHash = Get-Sha256 $controllerPath; ClosureHash = Get-Sha256 $closurePath; VmMarkerHash = Get-Sha256 $vmMarkerPath; OwnerProofHash = Get-Sha256 $ownerProofPath; MemberEvidenceHash = Get-Sha256 $memberEvidencePath; ConfigurationHash = Get-Sha256 $controllerConfigPath; TargetSourceHash = Get-Sha256 'C:\ComsPcGuardPoc\Source\tools\Guard.WindowsPoc.Fixture\bin\Release\net10.0\win-x64\publish\ComsPcGuardPoc.DenyTarget.exe'; ControlSourceHash = Get-Sha256 'C:\ComsPcGuardPoc\Source\tools\Guard.WindowsPoc.ControlFixture\bin\Release\net10.0\win-x64\publish\ComsPcGuardPoc.PublisherControl.exe'; Watchdog = $recoveryName } | ConvertTo-Json -Compress
     if (Test-Path -LiteralPath $path) { if ((Get-Content -LiteralPath $path -Raw -ErrorAction Stop) -ne $json) { Fail 'Existing provisioning evidence differs.' } } elseif ($PSCmdlet.ShouldProcess($path, 'Write redacted provisioning evidence')) { [IO.File]::WriteAllText($path, $json, [Text.UTF8Encoding]::new($false)) }
     return $json
@@ -356,6 +384,12 @@ function Start-ProofBroker {
     $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
     $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false, $true)
     $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false, $true)
+    $systemRoot = $env:SystemRoot; $windowsRoot = $env:WINDIR; $temporary = $env:TEMP; $temporaryFallback = $env:TMP
+    $start.EnvironmentVariables.Clear()
+    $start.EnvironmentVariables['SystemRoot'] = $systemRoot
+    $start.EnvironmentVariables['WINDIR'] = $windowsRoot
+    $start.EnvironmentVariables['TEMP'] = $temporary
+    $start.EnvironmentVariables['TMP'] = $temporaryFallback
     $script:broker = [Diagnostics.Process]::Start($start)
     $script:brokerErrorBuffer = New-Object char[] 1
     $script:brokerErrorRead = $script:broker.StandardError.ReadAsync($script:brokerErrorBuffer, 0, 1)
@@ -381,13 +415,14 @@ try {
     Start-ProofBroker
     $inputs = Read-ProtectedInputs
     Test-CurrentVmBinding $inputs
-    $existingPaths = @($controllerPath, $closurePath, $controllerConfigPath, $recoveryPath, (Join-Path $fixtureRoot 'target.exe'), (Join-Path $fixtureRoot 'control.exe'), (Join-Path $evidenceRoot 'provisioning.json'))
+    $existingPaths = @($controllerPath, $closurePath, $controllerConfigPath, $recoveryPath, (Join-Path $fixtureRoot 'target.exe'), (Join-Path $fixtureRoot 'control.exe'), $deploymentEvidencePath)
     $existingCount = @($existingPaths | Where-Object { Test-Path -LiteralPath $_ }).Count
     if ($existingCount -ne 0) {
         if ($existingCount -ne $existingPaths.Count) { Fail 'Existing deployment is partial.' }
         Confirm-ProofPhase 'PROVE'
         Assert-ExistingDeployment $inputs
     } else {
+        if (Test-ManagedDeploymentArtifact) { Fail 'Preserved partial deployment requires inspection.' }
         if ($null -ne (Get-ScheduledTask -TaskName $recoveryName -TaskPath '\' -ErrorAction SilentlyContinue)) { Fail 'Watchdog without deployment.' }
         Confirm-ProofPhase 'PUBLISH_BEGIN'
         New-DirectoryExact $applicationRoot; New-DirectoryExact $controllerRoot; New-DirectoryExact $scriptsRoot; New-DirectoryExact 'C:\ComsPcGuardPoc'; New-DirectoryExact $fixtureRoot; New-DirectoryExact $evidenceRoot
@@ -397,12 +432,10 @@ try {
         Merge-FixturePublish $sourceRoot 'tools\Guard.WindowsPoc.ControlFixture\Guard.WindowsPoc.ControlFixture.csproj' 'ComsPcGuardPoc.PublisherControl.exe' 'control.exe'
         Confirm-ProofPhase 'PUBLISH_END'
         Confirm-ProofPhase 'SIGN_BEGIN'
-        $createdCertificate = @(Get-ChildItem -LiteralPath 'Cert:\LocalMachine\My' | Where-Object { $_.Subject -eq $labSubject }).Count -eq 0
-        $certificate = Get-LabCertificate
-        if ($null -eq $certificate) { Fail 'Certificate creation declined.' }
-        foreach ($store in @('Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
-            if (-not (Test-Path -LiteralPath ($store + '\' + $certificate.Thumbprint))) { $addedTrust += $store }
-        }
+        $certificateResult = Get-LabCertificate
+        if ($null -eq $certificateResult) { Fail 'Certificate creation declined.' }
+        $certificate = $certificateResult.Certificate
+        $createdCertificate = [bool]$certificateResult.Created
         Install-LabPublicTrust $certificate
         Assert-LabCertificate $certificate
         Sign-Fixtures $certificate
@@ -418,13 +451,12 @@ try {
         }
         Get-ChildItem -LiteralPath $fixtureRoot -Force -Recurse | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid $inputs.MemberSids -Fixture }
         Set-ProtectedAcl $fixtureRoot $inputs.OwnerSid $inputs.MemberSids -Fixture
-        Get-ChildItem -LiteralPath $applicationRoot -File -Force | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid @() }
+        Get-ChildItem -LiteralPath $applicationRoot -Force -Recurse | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object { Set-ProtectedAcl $_.FullName $inputs.OwnerSid @() }
         Set-ProtectedAcl $applicationRoot $inputs.OwnerSid @()
         Set-ProtectedAcl 'C:\ComsPcGuardPoc' $inputs.OwnerSid @()
         Confirm-ProofPhase 'PROTECT_END'
         Confirm-ProofPhase 'TASK_BEGIN'
-        $createdTask = $true
-        Install-Watchdog
+        Install-Watchdog | Out-Null
         Confirm-ProofPhase 'TASK_END'
         Assert-ExistingDeployment $inputs
     }
@@ -440,8 +472,15 @@ try {
         } catch { } # Trust rollback below must run even when task cleanup refuses.
     }
     if ($null -ne $certificate -and $certificate.Thumbprint -match '^[0-9A-F]{40}$') {
-        foreach ($store in $addedTrust) {
-            try { if (Test-Path -LiteralPath ($store + '\' + $certificate.Thumbprint)) { Remove-Item -LiteralPath ($store + '\' + $certificate.Thumbprint) -ErrorAction Stop } } catch { }
+        foreach ($entry in $addedTrust) {
+            try {
+                $store = [Security.Cryptography.X509Certificates.X509Store]::new($entry.StoreName, [Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+                try {
+                    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                    $matches = @($store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $entry.Thumbprint, $false))
+                    if ($matches.Count -eq 1 -and [Convert]::ToBase64String($matches[0].RawData) -ceq [Convert]::ToBase64String($entry.RawData)) { $store.Remove($matches[0]) }
+                } finally { $store.Close(); $store.Dispose() }
+            } catch { }
         }
         if ($createdCertificate) {
             try { Remove-Item -LiteralPath ('Cert:\LocalMachine\My\' + $certificate.Thumbprint) -ErrorAction Stop } catch { }

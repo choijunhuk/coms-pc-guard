@@ -22,5 +22,20 @@ namespace Guard.WindowsPoc.Tests.Execution
             foreach (PocCommandKind kind in Enum.GetValues<PocCommandKind>())
             { Assert.AreEqual(PocExitCode.Refused, await PocNativeController.ExecuteAsync(new(kind), TextWriter.Null, CancellationToken.None)); }
         }
+
+        [TestMethod]
+        public void RecoveryDoesNotCreateAnAbsentJournal()
+        {
+            int checks = 0;
+            Assert.IsFalse(PocNativeController.ShouldOpenJournal(PocCommandKind.Recover, path =>
+            {
+                checks++;
+                Assert.AreEqual(@"C:\ProgramData\ComsPcGuardPoc\policy.journal", path);
+                return false;
+            }));
+            Assert.AreEqual(1, checks);
+            Assert.IsTrue(PocNativeController.ShouldOpenJournal(PocCommandKind.Recover, _ => true));
+            Assert.IsTrue(PocNativeController.ShouldOpenJournal(PocCommandKind.Run, _ => false));
+        }
     }
 }

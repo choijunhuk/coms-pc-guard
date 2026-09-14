@@ -102,3 +102,27 @@ The original round-4 implementer exhausted its model usage after writing the sid
 - PASS: win-x64 self-contained `--no-restore` publish for ProvisioningHost, Guard.WindowsPoc controller, deny target fixture, and publisher control fixture.
 - PASS: PowerShell AST parse for all seven tracked `scripts/windows/*.ps1` files; `git diff --check`; focused secret scan.
 - NOT_RUN_WINDOWS_ONLY: live sidecar Owner/VM/ACL/certificate/store/task execution and native AppLocker acceptance remain for the disposable VM.
+
+## Fix round 5
+
+### Review findings addressed
+
+- Replaced the environment-controlled temporary certificate export/import with direct in-memory `X509Store.Add` of the exact public certificate bytes. Each successfully added store/thumbprint/raw-certificate tuple is recorded immediately and rollback removes only that exact tuple.
+- A no-op `recover --allow-write` now returns success without opening or creating an absent `policy.journal`. Provisioning refuses while a journal exists and excludes the mutable journal from immutable deployment hashes/retained handles, preventing the minute watchdog from breaking proof reruns or racing a read-only lease.
+- Deployment evidence moved from the pre-existing account-provisioning `Evidence\provisioning.json` to `Evidence\deployment.json`.
+- Fresh-install detection now rejects any preserved controller/scripts/fixture directory, config/closure/deployment file, matching lab certificate/trust entry, or watchdog when the complete sentinel set is absent. Failures before sentinel creation can no longer be treated as a fresh install.
+- Certificate and watchdog cleanup ownership is recorded immediately after the exact create/add succeeds, not inferred from pre-state. Failures during later validation therefore clean only artifacts actually created by the current invocation.
+- The ProgramData application subtree is recursively protected, including pre-existing fixed evidence/input descendants. Mutable journal creation remains owned by the production `WindowsPocStateLease` contract.
+- Sidecar launch now clears the inherited environment and supplies only fixed Windows/TEMP variables, excluding CLR profiling/startup-hook/additional-deps injection.
+- Extracted a tested protocol state machine. Tests cover both exact flows, ordering/replay/unknown phases, canonical no-argument redirected launch, bounded nonce/sequence acknowledgements, invalid phase characters, bounded line input and EOF.
+- Added regression coverage proving recovery does not create an absent journal and executable PowerShell coverage proving partial directories/certificates/tasks are detected.
+
+### Verification
+
+- PASS: focused provisioning/protocol/no-journal recovery tests — 8/8.
+- PASS: executable PowerShell provisioning contracts, including partial-state detection.
+- PASS: locked solution restore; format verification; Release build with 0 warnings and 0 errors.
+- PASS: default and `TZ=UTC` suites — Core 117, Service 148, WindowsPoc 214 passed/2 Windows-only skipped; 479 passed, 0 failed per run.
+- PASS: win-x64 self-contained `--no-restore` publish for sidecar, controller, deny fixture and control fixture.
+- PASS: all seven PowerShell scripts parse; `git diff --check` and focused secret scan.
+- NOT_RUN_WINDOWS_ONLY: live certificate/ACL/task/sidecar phases and AppLocker acceptance remain for the disposable VM.

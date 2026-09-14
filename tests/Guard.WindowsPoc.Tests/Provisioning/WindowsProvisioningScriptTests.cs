@@ -37,9 +37,10 @@ namespace Guard.WindowsPoc.Tests.Provisioning
                 "Existing fixture closure differs", "Existing controller configuration differs", "Get-ScheduledTask", "task.Triggers.Count -ne 2",
                 "Member account is administrator", "target.exe", "control.exe", "Write-RedactedEvidence"
                 , "Assert-ExistingDeployment", "Get-RelativeFixturePath", "Validate-Watchdog", "Test-CurrentVmBinding",
-                "GetFinalPathNameByHandle", "FileShare]::Read", "Certificate policy mismatch", "Existing deployment mismatch"
+                "GetFinalPathNameByHandle", "FileShare]::Read", "Certificate policy mismatch", "Existing deployment mismatch",
+                "Test-ManagedDeploymentArtifact", "deployment.json", "X509Store", "EnvironmentVariables.Clear", "Created = $true"
             }) { StringAssert.Contains(script, required); }
-            foreach (string forbidden in new[] { "Password", "SecureString", "Pfx", "Export-Pfx", "$args", "Invoke-Expression", "http://", "https://" })
+            foreach (string forbidden in new[] { "Password", "SecureString", "Pfx", "Export-Pfx", "Export-Certificate", "Import-Certificate", "$args", "Invoke-Expression", "http://", "https://" })
             { Assert.IsFalse(script.Contains(forbidden, StringComparison.OrdinalIgnoreCase), forbidden); }
             Assert.IsFalse(script.Contains(" ? ", StringComparison.Ordinal), "Windows PowerShell 5.1 has no ternary operator.");
             Assert.IsFalse(script.Contains("Path]::GetRelativePath", StringComparison.Ordinal), ".NET Framework lacks Path.GetRelativePath.");

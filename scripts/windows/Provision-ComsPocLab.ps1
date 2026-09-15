@@ -155,9 +155,11 @@ function Assert-LabCertificate($certificate) {
     if ($matches.Count -ne 1 -or $matches[0].Thumbprint -ne $certificate.Thumbprint) { Fail 'Certificate policy mismatch.' }
     $certificate = $matches[0]
     $now = Get-Date
-    $eku = @($certificate.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value })
+    $ekuExtension = @($certificate.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' })
+    $eku = @()
+    if ($ekuExtension.Count -eq 1) { $eku = @($ekuExtension[0].EnhancedKeyUsages | ForEach-Object { $_.Value }) }
     $rsa = $certificate.PrivateKey
-    if ($certificate.Subject -ne $labSubject -or -not $certificate.HasPrivateKey -or $rsa.CspKeyContainerInfo.Exportable -or $rsa.CspKeyContainerInfo.ProviderName -ne 'Microsoft Enhanced RSA and AES Cryptographic Provider' -or $rsa.KeySize -ne 3072 -or $certificate.SignatureAlgorithm.Value -ne '1.2.840.113549.1.1.11' -or $eku.Count -ne 1 -or $eku[0] -ne '1.3.6.1.5.5.7.3.3' -or $certificate.NotBefore -gt $now -or $certificate.NotAfter -le $now -or ($certificate.NotAfter - $certificate.NotBefore).TotalDays -gt 7) { Fail 'Certificate policy mismatch.' }
+    if ($certificate.Subject -ne $labSubject -or -not $certificate.HasPrivateKey -or $rsa.CspKeyContainerInfo.Exportable -or $rsa.CspKeyContainerInfo.ProviderName -ne 'Microsoft Enhanced RSA and AES Cryptographic Provider' -or $rsa.KeySize -ne 3072 -or $certificate.SignatureAlgorithm.Value -ne '1.2.840.113549.1.1.11' -or $ekuExtension.Count -ne 1 -or $eku.Count -ne 1 -or $eku[0] -ne '1.3.6.1.5.5.7.3.3' -or $certificate.NotBefore -gt $now -or $certificate.NotAfter -le $now -or ($certificate.NotAfter - $certificate.NotBefore).TotalDays -gt 7) { Fail 'Certificate policy mismatch.' }
     foreach ($storePath in @('Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher')) {
         $trust = @(Get-ChildItem -LiteralPath $storePath -ErrorAction Stop | Where-Object { $_.Subject -eq $labSubject })
         if ($trust.Count -ne 1 -or $trust[0].HasPrivateKey -or [Convert]::ToBase64String($trust[0].RawData) -cne [Convert]::ToBase64String($certificate.RawData)) { Fail 'Certificate trust binding mismatch.' }

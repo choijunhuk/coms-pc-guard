@@ -82,7 +82,10 @@ function GoodCertificate {
     [pscustomobject]@{ Subject = $labSubject; Thumbprint = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'; HasPrivateKey = $true; RawData = [byte[]]@(1,2,3)
         PrivateKey = [pscustomobject]@{ KeySize = 3072; CspKeyContainerInfo = [pscustomobject]@{ Exportable = $false; ProviderName = 'Microsoft Enhanced RSA and AES Cryptographic Provider' } }
         SignatureAlgorithm = [pscustomobject]@{ Value = '1.2.840.113549.1.1.11' }
-        EnhancedKeyUsageList = @([pscustomobject]@{ ObjectId = [pscustomobject]@{ Value = '1.3.6.1.5.5.7.3.3' } })
+        Extensions = @([pscustomobject]@{
+            Oid = [pscustomobject]@{ Value = '2.5.29.37' }
+            EnhancedKeyUsages = @([pscustomobject]@{ Value = '1.3.6.1.5.5.7.3.3' })
+        })
         NotBefore = (Get-Date).AddMinutes(-1); NotAfter = (Get-Date).AddDays(6)
     }
 }
@@ -94,6 +97,7 @@ foreach ($change in @(
     { $script:myCertificate.HasPrivateKey = $false },
     { $script:myCertificate.PrivateKey.CspKeyContainerInfo.Exportable = $true },
     { $script:myCertificate.PrivateKey.KeySize = 2048 },
+    { $script:myCertificate.Extensions[0].EnhancedKeyUsages[0].Value = '1.3.6.1.5.5.7.3.1' },
     { $script:myCertificate.NotAfter = (Get-Date).AddDays(8) },
     { $script:myCertificate.Thumbprint = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' }
 )) { $script:myCertificate = GoodCertificate; & $change; Reject { Assert-LabCertificate $public } }

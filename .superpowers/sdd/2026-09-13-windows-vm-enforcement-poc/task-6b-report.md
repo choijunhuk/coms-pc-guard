@@ -132,3 +132,20 @@ The original round-4 implementer exhausted its model usage after writing the sid
 - PASS: win-x64 self-contained `--no-restore` publish for sidecar, controller, deny fixture and control fixture.
 - PASS: all seven PowerShell scripts parse; `git diff --check` and focused secret scan.
 - NOT_RUN_WINDOWS_ONLY: live certificate/ACL/task/sidecar phases and AppLocker acceptance remain for the disposable VM.
+
+## Fix round 6
+
+### Native RED and correction
+
+- Windows native provisioning reached the complete 201-file controller and 197-file merged fixture publish sets, then refused before signing. Isolated SYSTEM diagnostics proved global-gate protocol acknowledgements through `SIGN_BEGIN`, certificate creation/removal, and in-memory Root/TrustedPublisher add/remove all passed.
+- The exact native failure was the code-signing EKU predicate: Windows PowerShell 5.1 exposed the display-oriented `EnhancedKeyUsageList.ObjectId` differently, so `.ObjectId.Value` evaluated empty even though the certificate contained exactly one EKU.
+- `Assert-LabCertificate` now reads the actual X.509 enhanced-key-usage extension (`2.5.29.37`) and its `EnhancedKeyUsages` OIDs. The policy remains strict: exactly one extension and exactly one code-signing OID (`1.3.6.1.5.5.7.3.3`) are required.
+- The executable contract mock now supplies the real extension shape and mutates the OID to a non-code-signing value to prove refusal.
+
+### Verification
+
+- PASS: focused provisioning tests — 8/8.
+- PASS: executable PowerShell provisioning contract.
+- PASS: locked restore, format verification, Release build with 0 warnings/errors, and PowerShell AST parsing.
+- PASS: default and `TZ=UTC` suites — Core 117, Service 148, WindowsPoc 216 passed/2 Windows-only skipped; 481 passed, 0 failed per run.
+- PENDING_WINDOWS_RERUN: install the corrected commit, archive the preserved unsigned partial publish outside managed roots, repeat native gates/source protection, then rerun provisioning and AppLocker acceptance.

@@ -29,23 +29,26 @@ $recoveryName = 'ComsPcGuardPoc-Watchdog'; $scriptsRoot = 'C:\ProgramData\ComsPc
 function GoodTask {
     return [pscustomobject]@{
         TaskName = $recoveryName; TaskPath = '\'
-        Principal = [pscustomobject]@{ UserId = 'S-1-5-18'; LogonType = 'ServiceAccount'; RunLevel = 'Highest' }
+        Principal = [pscustomobject]@{ UserId = 'SYSTEM'; LogonType = 'ServiceAccount'; RunLevel = 'Highest' }
         Settings = [pscustomobject]@{ Enabled = $true; MultipleInstances = 'IgnoreNew'; ExecutionTimeLimit = 'PT2M'; StartWhenAvailable = $true; AllowDemandStart = $true; AllowHardTerminate = $true; DisallowStartIfOnBatteries = $false; StopIfGoingOnBatteries = $false; RunOnlyIfIdle = $false; RunOnlyIfNetworkAvailable = $false; WakeToRun = $false; Hidden = $false; RestartCount = 0; RestartInterval = ''; DeleteExpiredTaskAfter = ''; Priority = 7; Compatibility = 'Win8' }
         Actions = @([pscustomobject]@{ Execute = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'; Arguments = '-NoProfile -NonInteractive -File "C:\ProgramData\ComsPcGuardPoc\Scripts\Resume-ComsPocRecovery.ps1" -AllowWrite'; WorkingDirectory = $scriptsRoot })
         Triggers = @(
             [pscustomobject]@{ Enabled = $true; CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskBootTrigger' }; Delay = ''; Repetition = [pscustomobject]@{ Interval = ''; Duration = ''; StopAtDurationEnd = $false }; EndBoundary = ''; StartBoundary = ''; ExecutionTimeLimit = '' },
-            [pscustomobject]@{ Enabled = $true; CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskTimeTrigger' }; RandomDelay = ''; Repetition = [pscustomobject]@{ Interval = 'PT1M'; Duration = 'P9999D'; StopAtDurationEnd = $false }; EndBoundary = ''; StartBoundary = '2026-01-01T00:00:00'; ExecutionTimeLimit = '' }
+            [pscustomobject]@{ Enabled = $true; CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskTimeTrigger' }; RandomDelay = ''; Repetition = [pscustomobject]@{ Interval = 'PT1M'; Duration = 'P9999D'; StopAtDurationEnd = $true }; EndBoundary = ''; StartBoundary = '2026-01-01T00:00:00+09:00'; ExecutionTimeLimit = '' }
         )
     }
 }
 Validate-Watchdog (GoodTask)
+$t = GoodTask; $t.Principal.UserId = 'S-1-5-18'; Validate-Watchdog $t
 foreach ($change in @(
     { param($t) $t.Settings.Enabled = $false },
     { param($t) $t.Settings.RunOnlyIfIdle = $true },
     { param($t) $t.Settings.DisallowStartIfOnBatteries = $true },
     { param($t) $t.Triggers[1].CimClass.CimClassName = 'MSFT_TaskDailyTrigger' },
     { param($t) $t.Triggers[1].Repetition.Duration = 'PT1M' },
+    { param($t) $t.Triggers[1].Repetition.StopAtDurationEnd = $false },
     { param($t) $t.Triggers[1].StartBoundary = '2099-01-01T00:00:00' },
+    { param($t) $t.Principal.UserId = 'Administrators' },
     { param($t) $t.TaskPath = '\\' },
     { param($t) $t.Actions[0].Arguments += ' extra' }
 )) { $t = GoodTask; & $change $t; Reject { Validate-Watchdog $t } }
@@ -123,7 +126,9 @@ $remove = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Reposit
 foreach ($function in $remove.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) { . ([scriptblock]::Create($function.Extent.Text)) }
 $taskName = $recoveryName
 Validate-Watchdog (GoodTask)
+$t = GoodTask; $t.Principal.UserId = 'S-1-5-18'; Validate-Watchdog $t
 $t = GoodTask; $t.Triggers[1].Repetition.Duration = 'PT1M'; Reject { Validate-Watchdog $t }
+$t = GoodTask; $t.Triggers[1].Repetition.StopAtDurationEnd = $false; Reject { Validate-Watchdog $t }
 $t = GoodTask; $t.Settings.Enabled = $false; Reject { Validate-Watchdog $t }
 
 # A prior failure that leaves any managed output, certificate or task cannot be mistaken for a fresh install.

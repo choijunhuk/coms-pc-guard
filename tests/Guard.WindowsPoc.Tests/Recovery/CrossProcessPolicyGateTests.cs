@@ -214,7 +214,10 @@ namespace Guard.WindowsPoc.Tests.Recovery
                 _ = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => new CrossProcessPolicyGate(sid).RunAsync(() => Task.FromResult(1), CancellationToken.None));
                 return;
             }
-            CrossProcessPolicyGate first = new(sid), second = new(sid);
+            OwnerTokenAttestationProof proof = OwnerTokenAttestation.CreateProof(Owner, "0123456789abcdef0123456789abcdef", "COMS-PC-Guard-x64-Lab", new string('a', 64));
+            OwnerTokenPolicyGateCapability capability = CapabilityForTest(Owner, proof.Nonce, proof.ExpectedVmName, proof.VmIdentityHash,
+                () => new OwnerTokenAttestationContext(SystemSid, false, true, proof));
+            CrossProcessPolicyGate first = new(capability), second = new(capability);
             int active = 0;
             async Task<int> Action() { Assert.AreEqual(1, Interlocked.Increment(ref active)); await Task.Delay(30); return Interlocked.Decrement(ref active); }
             _ = await Task.WhenAll(first.RunAsync(Action, CancellationToken.None), second.RunAsync(Action, CancellationToken.None));

@@ -141,6 +141,7 @@ The original round-4 implementer exhausted its model usage after writing the sid
 - The exact native failure was the code-signing EKU predicate: Windows PowerShell 5.1 exposed the display-oriented `EnhancedKeyUsageList.ObjectId` differently, so `.ObjectId.Value` evaluated empty even though the certificate contained exactly one EKU.
 - `Assert-LabCertificate` now reads the actual X.509 enhanced-key-usage extension (`2.5.29.37`) and its `EnhancedKeyUsages` OIDs. The policy remains strict: exactly one extension and exactly one code-signing OID (`1.3.6.1.5.5.7.3.3`) are required.
 - The executable contract mock now supplies the real extension shape and mutates the OID to a non-code-signing value to prove refusal.
+- The first corrected Windows gate exposed a SYSTEM-only test harness defect: `NativeGateIsWindowsOnlyOrSerializesActualGlobalMutex` passed the SYSTEM SID as the designated Owner SID. Its SYSTEM branch now constructs the existing protected SYSTEM-attestation capability for the fixed synthetic Owner and uses that capability for both real global-mutex contenders; the Owner/non-Windows branches remain unchanged.
 
 ### Verification
 

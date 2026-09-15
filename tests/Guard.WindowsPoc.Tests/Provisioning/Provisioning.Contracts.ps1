@@ -5,6 +5,22 @@ $path = Join-Path $RepositoryRoot 'scripts/windows/Provision-ComsPocLab.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'AST errors' }
+# SID text selects the account-name overload and fails translation on Windows.
+$aclFunction = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-ProtectedAcl' }, $false)
+$aceConstructors = @($aclFunction.FindAll({ param($node)
+    $node -is [Management.Automation.Language.InvokeMemberExpressionAst] -and
+    $node.Expression -is [Management.Automation.Language.TypeExpressionAst] -and
+    $node.Expression.TypeName.FullName -eq 'Security.AccessControl.FileSystemAccessRule'
+}, $true))
+if ($aceConstructors.Count -ne 3) { throw 'Expected SYSTEM, Owner and Member ACE constructors' }
+foreach ($constructor in $aceConstructors) {
+    $identity = $constructor.Arguments[0]
+    if ($identity -isnot [Management.Automation.Language.InvokeMemberExpressionAst] -or -not $identity.Static -or
+        $identity.Expression -isnot [Management.Automation.Language.TypeExpressionAst] -or
+        $identity.Expression.TypeName.FullName -ne 'Security.Principal.SecurityIdentifier' -or $identity.Member.Value -ne 'new') {
+        throw 'Protected ACE identity must be an explicit SecurityIdentifier, not an account-name string'
+    }
+}
 foreach ($function in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
     . ([scriptblock]::Create($function.Extent.Text))
 }

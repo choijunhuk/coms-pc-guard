@@ -192,12 +192,12 @@ function Set-ProtectedAcl([string] $path, [string] $ownerSid, [string[]] $member
     $security.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
     $inheritance = if ($item.PSIsContainer) { [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [Security.AccessControl.InheritanceFlags]::None }
     $systemRights = if ($item.PSIsContainer) { [Security.AccessControl.FileSystemRights]::FullControl } else { [Security.AccessControl.FileSystemRights]::FullControl }
-    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new('S-1-5-18', $systemRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-18'), $systemRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
     $ownerRights = [Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize
-    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($ownerSid, $ownerRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($ownerSid), $ownerRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
     if ($Fixture) {
         foreach ($memberSid in $memberSids) {
-            $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($memberSid, $ownerRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
+            $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($memberSid), $ownerRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
         }
     }
     if ($PSCmdlet.ShouldProcess($path, 'Apply protected ACL')) { Set-Acl -LiteralPath $path -AclObject $security -ErrorAction Stop }

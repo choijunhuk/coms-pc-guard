@@ -170,3 +170,22 @@ All commands ran from this worktree with the required .NET SDK `10.0.401`.
 - PASS: `/opt/homebrew/bin/pwsh -NoProfile -NonInteractive -Command '$files = Get-ChildItem scripts/windows/*.ps1; foreach ($file in $files) { $tokens = $null; $errors = $null; $null = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors); if ($errors.Count) { throw ($errors | Out-String) } }; "PowerShell AST parse passed: $($files.Count) scripts"'` — 7 scripts parsed.
 - PASS: `git diff --check`.
 - PENDING_WINDOWS_RERUN: corrected ACL construction/application and complete native provisioning acceptance in the isolated VM remain unverified by this macOS fix pass.
+
+## Native watchdog serialization fix
+
+- Implementation commit: `70d358f`.
+- The corrected SID build passed the native Windows gate at `f2202e1`: Core 117, WindowsPoc 218, Service 148; 483 passed, 0 failed, 0 skipped. All four win-x64 self-contained publishes and 3,222 protected source entries passed.
+- Actual provisioning advanced through signing and ACL protection. Independent recursive ACL inspection returned `IssueCount = 0`, proving the explicit `SecurityIdentifier` correction on Windows.
+- Provisioning then refused while validating the watchdog. The failed cleanup left a SYSTEM-visible task that the non-elevated Owner session could not enumerate. A SYSTEM-only retained inspection observed three representation mismatches: `Principal.UserId` was `SYSTEM`, the minute trigger `StartBoundary` was `2026-01-01T00:00:00+09:00`, and `StopAtDurationEnd` was `true`.
+- Both provision and cleanup validators now accept only the equivalent LocalSystem forms `S-1-5-18` and `SYSTEM`, require the observed Korea-offset start boundary, and require `StopAtDurationEnd = true`. All other exact task fields remain unchanged and an Administrators principal still refuses.
+- The VM stopped responding after the failed provisioning inspection. ACPI shutdown did not complete, so the exact VirtualBox process tree for only `COMS-PC-Guard-x64-Lab` was terminated and restarted. Windows, Guest Additions, Owner login, and GuestControl recovered; the physical Windows host was not rebooted.
+
+### RED / GREEN and verification
+
+- RED: executable provisioning contracts failed with `Watchdog definition mismatch` after the test fixture was changed to the native Windows representation.
+- GREEN: executable provisioning contracts passed after both validators were corrected.
+- PASS: focused provisioning tests — 8/8.
+- PASS: PowerShell AST parsing and `git diff --check`.
+- PASS: format verification and Release build — 0 warnings, 0 errors.
+- PASS: default and `TZ=UTC` full suites — Core 117, Service 148, WindowsPoc 216 passed/2 Windows-only skipped; 481 passed, 0 failed per run.
+- PENDING_WINDOWS_RERUN: remove the exact hidden watchdog with the corrected validator, archive the preserved partial deployment, install `70d358f`, repeat native gates/source protection, then complete first provisioning and identical-rerun proof.

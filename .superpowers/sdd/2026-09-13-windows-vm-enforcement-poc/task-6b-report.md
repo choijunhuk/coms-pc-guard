@@ -150,3 +150,23 @@ The original round-4 implementer exhausted its model usage after writing the sid
 - PASS: locked restore, format verification, Release build with 0 warnings/errors, and PowerShell AST parsing.
 - PASS: default and `TZ=UTC` suites — Core 117, Service 148, WindowsPoc 216 passed/2 Windows-only skipped; 481 passed, 0 failed per run.
 - PENDING_WINDOWS_RERUN: install the corrected commit, archive the preserved unsigned partial publish outside managed roots, repeat native gates/source protection, then rerun provisioning and AppLocker acceptance.
+
+## Native ACL identity fix
+
+- Implementation commit: `5bee18065b91c9805ae4edc05b4458fbbe796137` (base `696f21d4f9bbf46364fe057303b33161791c6dcb`).
+- The preserved native SYSTEM diagnostic in `task-6b-acl-native-failure.md` failed at `ADD_SYSTEM_RULE` with `IdentityNotMappedException`, before `Set-Acl`: the string constructor treated SID text as an account name.
+- Changed only the SYSTEM, Owner and Member ACE identity arguments in `Set-ProtectedAcl` to explicit `SecurityIdentifier` instances. Rights, inheritance, ownership, ACL verification and task behavior are unchanged.
+- Added a portable AST regression contract covering all three production ACE constructors. This proves the identity-construction boundary; it does not execute a Windows ACL on macOS.
+
+### RED / GREEN and verification
+
+All commands ran from this worktree with the required .NET SDK `10.0.401`.
+
+- RED, before production edits: `/opt/homebrew/bin/pwsh -NoProfile -NonInteractive -File tests/Guard.WindowsPoc.Tests/Provisioning/Provisioning.Contracts.ps1 -RepositoryRoot "$PWD"` exited 1 with `Protected ACE identity must be an explicit SecurityIdentifier, not an account-name string`.
+- GREEN, after the three identity argument edits: the same executable contract command exited 0 with `Executable provisioning contracts passed`.
+- PASS: `/Users/choi/.dotnet/dotnet test tests/Guard.WindowsPoc.Tests/Guard.WindowsPoc.Tests.csproj -c Release --no-restore --filter 'FullyQualifiedName~Provisioning'` — 8 passed, 0 failed, 0 skipped.
+- PASS: `/Users/choi/.dotnet/dotnet format ComsPcGuard.sln --verify-no-changes --no-restore` — exit 0.
+- PASS: `/Users/choi/.dotnet/dotnet build ComsPcGuard.sln -c Release --no-restore` — 0 warnings, 0 errors.
+- PASS: `/opt/homebrew/bin/pwsh -NoProfile -NonInteractive -Command '$files = Get-ChildItem scripts/windows/*.ps1; foreach ($file in $files) { $tokens = $null; $errors = $null; $null = [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors); if ($errors.Count) { throw ($errors | Out-String) } }; "PowerShell AST parse passed: $($files.Count) scripts"'` — 7 scripts parsed.
+- PASS: `git diff --check`.
+- PENDING_WINDOWS_RERUN: corrected ACL construction/application and complete native provisioning acceptance in the isolated VM remain unverified by this macOS fix pass.

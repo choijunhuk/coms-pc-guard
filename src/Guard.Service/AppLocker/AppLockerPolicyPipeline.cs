@@ -14,11 +14,16 @@ namespace Guard.Service.AppLocker
         private readonly AppLockerPreviewCompiler _compiler = new();
         private readonly AppLockerPolicyXmlWriter _writer = new();
 
-        public AppLockerPipelineResult Run(GuardConfiguration configuration, AppLockerInventorySnapshot inventory, DateTimeOffset nowUtc)
+        /// <param name="revision">
+        /// Version stamped on the compiled artifact. The Owner's policyVersion identifies the file; the same file compiles to
+        /// different rules over time (grants expire, windows open), and each distinct result needs its own durable revision.
+        /// </param>
+        public AppLockerPipelineResult Run(GuardConfiguration configuration, AppLockerInventorySnapshot inventory, DateTimeOffset nowUtc, long? revision = null)
         {
             ArgumentNullException.ThrowIfNull(configuration);
             ArgumentNullException.ThrowIfNull(inventory);
             DateTimeOffset now = nowUtc.ToUniversalTime();
+            PolicyDefinition policy = revision is { } stamped ? configuration.Policy with { Version = stamped } : configuration.Policy;
 
             List<PolicyDecision> decisions = [];
             foreach (GuardMember member in configuration.Members)
@@ -26,7 +31,7 @@ namespace Guard.Service.AppLocker
                 foreach (GuardApplication application in configuration.Applications)
                 {
                     decisions.Add(_evaluator.Evaluate(
-                        configuration.Policy,
+                        policy,
                         new PolicyEvaluationRequest(now, member.Sid, application.AppId, IsRegisteredApp: true)));
                 }
             }
@@ -44,8 +49,8 @@ namespace Guard.Service.AppLocker
                 decisions,
                 inventory,
                 now,
-                configuration.Policy.Version,
-                configuration.Policy.AuditOnly ? AppLockerEnforcementMode.AuditOnly : AppLockerEnforcementMode.Enabled);
+                policy.Version,
+                policy.AuditOnly ? AppLockerEnforcementMode.AuditOnly : AppLockerEnforcementMode.Enabled);
             AppLockerPolicyPreview preview = _compiler.Compile(request);
             string? xml = preview.EligibleForNativeApplyRevalidation ? _writer.Write(preview) : null;
             DateTimeOffset[] transitions = [.. decisions.Where(decision => decision.NextTransition is not null).Select(decision => decision.NextTransition!.Value)];

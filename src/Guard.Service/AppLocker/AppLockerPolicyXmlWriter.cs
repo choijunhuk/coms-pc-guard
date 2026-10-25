@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Xml.Linq;
 
 namespace Guard.Service.AppLocker
@@ -13,12 +14,15 @@ namespace Guard.Service.AppLocker
         public string Write(AppLockerPolicyPreview preview)
         {
             ArgumentNullException.ThrowIfNull(preview);
-            if (!preview.IsCompleteStandalonePolicy)
-            {
-                throw new InvalidOperationException("Only a complete standalone AppLocker policy preview can be serialized.");
-            }
+            return !preview.IsCompleteStandalonePolicy
+                ? throw new InvalidOperationException("Only a complete standalone AppLocker policy preview can be serialized.")
+                : WriteRules(preview.EnforcementMode, preview.PolicyVersion, preview.DesiredOwnedRules);
+        }
 
-            AppLockerOwnedRule[] rules = [.. preview.DesiredOwnedRules.OrderBy(rule => rule.Id, StringComparer.Ordinal)];
+        /// <summary>The baseline Description carries the policy version so an observed local policy identifies itself.</summary>
+        internal static string WriteRules(AppLockerEnforcementMode enforcementMode, long policyVersion, IReadOnlyList<AppLockerOwnedRule> ownedRules)
+        {
+            AppLockerOwnedRule[] rules = [.. ownedRules.OrderBy(rule => rule.Id, StringComparer.Ordinal)];
             if (rules.Length == 0 || rules.Select(rule => rule.Collection).Distinct().Count() != 1
                 || rules[0].Collection != AppLockerCollectionType.Exe)
             {
@@ -38,13 +42,23 @@ namespace Guard.Service.AppLocker
             XElement collection = new(
                 "RuleCollection",
                 new XAttribute("Type", "Exe"),
-                new XAttribute("EnforcementMode", EnforcementMode(preview.EnforcementMode)),
-                rules.Select(Rule));
+                new XAttribute("EnforcementMode", EnforcementMode(enforcementMode)),
+                rules.Select(rule => Rule(rule, policyVersion)));
             XDocument document = new(new XElement("AppLockerPolicy", new XAttribute("Version", "1"), collection));
             return document.ToString(SaveOptions.DisableFormatting);
         }
 
-        private static XElement Rule(AppLockerOwnedRule rule)
+        internal static string BaselineDescription(long policyVersion)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{BaselineDescriptionPrefix}{policyVersion}");
+        }
+
+        internal const string BaselineDescriptionPrefix = "COMS PC Guard owned baseline; policy v";
+        internal const string OwnedRuleDescription = "COMS PC Guard owned rule";
+        internal const string BaselineName = "COMS PC Guard baseline";
+        internal const string RuleNamePrefix = "COMS PC Guard ";
+
+        private static XElement Rule(AppLockerOwnedRule rule, long policyVersion)
         {
             string action = rule.Action switch
             {
@@ -52,16 +66,18 @@ namespace Guard.Service.AppLocker
                 AppLockerRuleAction.Deny => "Deny",
                 _ => throw new InvalidOperationException("Unsupported AppLocker rule action."),
             };
-            string name = IsBaseline(rule) ? "COMS PC Guard baseline" : $"COMS PC Guard {rule.AppId}/{rule.IdentityId}";
+            bool baseline = IsBaseline(rule);
+            string name = baseline ? BaselineName : $"{RuleNamePrefix}{rule.AppId}/{rule.IdentityId}";
+            string description = baseline ? BaselineDescription(policyVersion) : OwnedRuleDescription;
             return rule.Condition switch
             {
                 AppLockerPathCondition path => new XElement(
                     "FilePathRule",
-                    CommonAttributes(rule, name, action),
+                    CommonAttributes(rule, name, description, action),
                     new XElement("Conditions", new XElement("FilePathCondition", new XAttribute("Path", path.Path)))),
                 AppLockerPublisherCondition publisher => new XElement(
                     "FilePublisherRule",
-                    CommonAttributes(rule, name, action),
+                    CommonAttributes(rule, name, description, action),
                     new XElement(
                         "Conditions",
                         new XElement(
@@ -77,13 +93,13 @@ namespace Guard.Service.AppLocker
             };
         }
 
-        private static object[] CommonAttributes(AppLockerOwnedRule rule, string name, string action)
+        private static object[] CommonAttributes(AppLockerOwnedRule rule, string name, string description, string action)
         {
             return
             [
                 new XAttribute("Id", rule.Id),
                 new XAttribute("Name", name),
-                new XAttribute("Description", "COMS PC Guard owned preview rule"),
+                new XAttribute("Description", description),
                 new XAttribute("UserOrGroupSid", rule.Sid),
                 new XAttribute("Action", action),
             ];

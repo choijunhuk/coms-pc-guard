@@ -130,7 +130,8 @@
       "guard": {
         "type": "Project",
         "dependencies": {
-          "Guard.Service": "[1.0.0, )"
+          "Guard.Service": "[1.0.0, )",
+          "Guard.Windows": "[1.0.0, )"
         }
       },
       "guard.core": {
@@ -141,6 +142,12 @@
         "dependencies": {
           "Guard.Core": "[1.0.0, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )"
+        }
+      },
+      "guard.windows": {
+        "type": "Project",
+        "dependencies": {
+          "Guard.Service": "[1.0.0, )"
         }
       },
       "Microsoft.Data.Sqlite": {

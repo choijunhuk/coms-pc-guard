@@ -6,22 +6,24 @@ using Guard.Core.Policies;
 using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
 
-return GuardCli.Run(args, Console.Out, Console.Error, TimeProvider.System);
+Console.OutputEncoding = Encoding.UTF8;
+return GuardCli.Run(args, Console.Out, Console.Error, TimeProvider.System, GuardCli.CreateDefaultGateway);
 
 namespace Guard.Cli
 {
 
     /// <summary>Owner command line. Commands never mutate Windows policy unless their name says so.</summary>
-    internal static class GuardCli
+    internal static partial class GuardCli
     {
         internal const int Success = 0;
         internal const int UsageError = 1;
         internal const int ConfigurationError = 2;
         internal const int NotEligible = 3;
+        internal const int NativeFailure = 4;
 
         private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-        internal static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error, TimeProvider time)
+        internal static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error, TimeProvider time, Func<IAppLockerNativeGateway>? gatewayFactory = null)
         {
             ArgumentNullException.ThrowIfNull(args);
             ArgumentNullException.ThrowIfNull(output);
@@ -33,9 +35,15 @@ namespace Guard.Cli
                 return args.Count == 0 ? UsageError : Success;
             }
 
+            string[] rest = [.. args.Skip(1)];
             return args[0] switch
             {
-                "preview" => Preview([.. args.Skip(1)], output, error, time),
+                "preview" => Preview(rest, output, error, time),
+                "apply" or "status" or "identify" or "clear" when gatewayFactory is null => Fail(error, "이 명령은 Windows에서만 동작합니다.", UsageError),
+                "apply" => Native(() => ApplyAsync(rest, output, error, time, gatewayFactory), error),
+                "status" => Native(() => StatusAsync(rest, output, error, time, gatewayFactory), error),
+                "identify" => Native(() => IdentifyAsync(rest, output, error, gatewayFactory), error),
+                "clear" => Native(() => ClearAsync(rest, output, error, gatewayFactory), error),
                 _ => Fail(error, $"알 수 없는 명령입니다: {args[0]}", UsageError),
             };
         }
@@ -166,6 +174,15 @@ namespace Guard.Cli
             output.WriteLine("사용법:");
             output.WriteLine("  guard preview --policy <정책.json> --assume-clean-inventory [--now <ISO 8601>] [--xml-out <파일>]");
             output.WriteLine("    정책 파일로 멤버·앱별 결정과 AppLocker XML을 미리 계산합니다. Windows 정책은 바꾸지 않습니다.");
+            output.WriteLine("  guard apply [--policy <정책.json>] [--state <state.db>]   (관리자)");
+            output.WriteLine("    지금 시각의 결정을 계산해 Windows와 다를 때만 적용하고, 실제 정책을 다시 읽어 확인합니다.");
+            output.WriteLine("  guard status [--policy <정책.json>] [--state <state.db>]");
+            output.WriteLine("    현재 AppLocker 상태, 적용된 리비전, 지금의 결정을 보여 줍니다. 아무것도 바꾸지 않습니다.");
+            output.WriteLine("  guard identify <실행 파일>");
+            output.WriteLine("    파일 서명에서 정책 파일에 넣을 게시자 식별 정보를 읽습니다.");
+            output.WriteLine("  guard clear   (관리자)");
+            output.WriteLine("    로컬 정책이 COMS PC Guard가 만든 것일 때만 지웁니다. 외부 정책은 건드리지 않습니다.");
+            output.WriteLine($"  기본 경로: {Path.Combine(DefaultDataDirectory, "policy.json")}, {Path.Combine(DefaultDataDirectory, "state.db")}");
         }
     }
 }

@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\\Guard.Service\\Guard.Service.csproj" />
+    <ProjectReference Include="..\\Guard.Windows\\Guard.Windows.csproj" />
   </ItemGroup>
 
   <ItemGroup>

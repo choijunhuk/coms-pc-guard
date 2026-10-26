@@ -36,6 +36,7 @@ namespace Guard.Notifier
         private GuardMemberStatus? _previous;
         private GuardStatusSnapshot? _snapshot;
         private StatusForm? _form;
+        private AlertForm? _alert;
 
         internal NotifierContext(string statusPath, string userSid)
         {
@@ -66,6 +67,7 @@ namespace Guard.Notifier
                 _icon.Visible = false;
                 _icon.Dispose();
                 _form?.Dispose();
+                _alert?.Dispose();
             }
 
             base.Dispose(disposing);
@@ -96,11 +98,31 @@ namespace Guard.Notifier
             IReadOnlyList<string> alerts = GuardStatusMessages.Alerts(_previous, me, now, zone, _warned);
             if (alerts.Count > 0)
             {
-                _icon.ShowBalloonTip(10000, "COMS PC Guard", string.Join(Environment.NewLine, alerts), ToolTipIcon.Info);
+                ShowAlert(string.Join(Environment.NewLine, alerts));
             }
 
             _previous = me;
             _form?.Render(me, _snapshot, zone);
+        }
+
+        /// <summary>
+        /// Shows an alert in the notifier's own corner window, not as a Windows notification banner: Windows hides banners
+        /// while "Do not disturb" is on, and Windows 11 turns that on by itself during games and full-screen apps, which is
+        /// exactly when a member needs the warning (seen in the lab; DR-013).
+        /// </summary>
+        private void ShowAlert(string message)
+        {
+            _alert?.Close();
+            AlertForm alert = new(message);
+            alert.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_alert, alert))
+                {
+                    _alert = null;
+                }
+            };
+            _alert = alert;
+            alert.Show();
         }
 
         private void ShowStatus()
@@ -128,6 +150,106 @@ namespace Guard.Notifier
             {
                 return TimeZoneInfo.Local;
             }
+        }
+    }
+
+    /// <summary>
+    /// A small always-on-top box in the bottom-right corner of the main screen. It never takes the keyboard focus, so a
+    /// game keeps its input; it closes itself after <see cref="ShowFor"/> and on a click.
+    /// </summary>
+    internal sealed class AlertForm : Form
+    {
+        private const int WsExTopmost = 0x00000008;
+        private const int WsExToolWindow = 0x00000080;
+        private const int WsExNoActivate = 0x08000000;
+        private static readonly TimeSpan ShowFor = TimeSpan.FromSeconds(15);
+        private static readonly Color Edge = Color.FromArgb(214, 158, 46);
+        private readonly System.Windows.Forms.Timer _closeTimer = new() { Interval = (int)ShowFor.TotalMilliseconds };
+
+        internal AlertForm(string message)
+        {
+            Text = "COMS PC Guard";
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = Color.FromArgb(255, 248, 225);
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            // The panel carries the inner spacing: a form's own padding does not move undocked children.
+            FlowLayoutPanel panel = new()
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = Padding.Empty,
+                Padding = new Padding(LogicalToDeviceUnits(18), LogicalToDeviceUnits(14), LogicalToDeviceUnits(18), LogicalToDeviceUnits(16)),
+            };
+            Label title = new()
+            {
+                Text = "COMS PC Guard",
+                AutoSize = true,
+                Font = new Font("Malgun Gothic", 9F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(122, 82, 0),
+                Margin = new Padding(0, 0, 0, LogicalToDeviceUnits(6)),
+            };
+            Label body = new()
+            {
+                Text = message,
+                AutoSize = true,
+                MaximumSize = new Size(LogicalToDeviceUnits(440), 0),
+                Font = new Font("Malgun Gothic", 11F),
+                ForeColor = Color.FromArgb(32, 32, 32),
+                Margin = Padding.Empty,
+            };
+            panel.Controls.Add(title);
+            panel.Controls.Add(body);
+            Controls.Add(panel);
+            foreach (Control control in (Control[])[this, panel, title, body])
+            {
+                control.Click += (_, _) => Close();
+            }
+
+            _closeTimer.Tick += (_, _) => Close();
+        }
+
+        protected override bool ShowWithoutActivation => true;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams parameters = base.CreateParams;
+                parameters.ExStyle |= WsExTopmost | WsExToolWindow | WsExNoActivate;
+                return parameters;
+            }
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            Rectangle area = (Screen.PrimaryScreen ?? Screen.FromControl(this)).WorkingArea;
+            int gap = LogicalToDeviceUnits(16);
+            Location = new Point(area.Right - Width - gap, area.Bottom - Height - gap);
+            _closeTimer.Start();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            ArgumentNullException.ThrowIfNull(e);
+            base.OnPaint(e);
+            ControlPaint.DrawBorder(e.Graphics, ClientRectangle, Edge, ButtonBorderStyle.Solid);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _closeTimer.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 

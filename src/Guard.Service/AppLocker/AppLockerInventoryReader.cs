@@ -32,8 +32,7 @@ namespace Guard.Service.AppLocker
                     : AppLockerPolicyPresence.External;
             }
 
-            bool foreignEffective = effective.ConfiguredCollections.Any(collection =>
-                collection.Type != "Exe" || collection.HasActiveExtensions || collection.Rules.Any(rule => !AppLockerArtifact.IsRecognizedOwnedRule(rule)));
+            bool foreignEffective = effective.ConfiguredCollections.Any(collection => !AppLockerArtifact.IsRecognizedOwnedCollection(collection));
             AppLockerPolicyPresence effectivePresence = foreignEffective ? AppLockerPolicyPresence.External : AppLockerPolicyPresence.Absent;
 
             AppLockerExistingRule[] existing = current is null

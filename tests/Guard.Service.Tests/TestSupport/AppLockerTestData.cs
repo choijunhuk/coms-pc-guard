@@ -31,7 +31,10 @@ namespace Guard.Service.Tests.TestSupport
             return AppLockerArtifact.FromPreview(new AppLockerPolicyPipeline().Run(configuration, CleanInventory(at), at).Preview);
         }
 
-        /// <summary>Rewrites product XML the way Get-AppLockerPolicy -Xml reports it: lowercase IDs, all collections, extensions.</summary>
+        /// <summary>
+        /// Rewrites product XML the way Get-AppLockerPolicy -Xml can report it: lowercase IDs, every collection in Windows'
+        /// order (missing ones NotConfigured), and NotConfigured extensions on the EXE collection.
+        /// </summary>
         internal static string AsWindowsReports(string xml)
         {
             XDocument document = XDocument.Parse(xml);
@@ -41,14 +44,32 @@ namespace Guard.Service.Tests.TestSupport
                 id.Value = id.Value.ToLowerInvariant();
             }
 
-            XElement exe = root.Elements("RuleCollection").Single();
-            exe.Add(Extensions());
-            root.AddFirst(
-                new XElement("RuleCollection", new XAttribute("Type", "Appx"), new XAttribute("EnforcementMode", "NotConfigured")),
-                new XElement("RuleCollection", new XAttribute("Type", "Dll"), new XAttribute("EnforcementMode", "NotConfigured")));
-            root.Add(
-                new XElement("RuleCollection", new XAttribute("Type", "Msi"), new XAttribute("EnforcementMode", "NotConfigured")),
-                new XElement("RuleCollection", new XAttribute("Type", "Script"), new XAttribute("EnforcementMode", "NotConfigured")));
+            XElement[] written = [.. root.Elements("RuleCollection")];
+            foreach (XElement collection in written)
+            {
+                collection.Remove();
+            }
+
+            foreach (string type in (string[])["Appx", "Dll", "Exe", "Msi", "Script"])
+            {
+                XElement collection = written.SingleOrDefault(candidate => (string?)candidate.Attribute("Type") == type)
+                    ?? new XElement("RuleCollection", new XAttribute("Type", type), new XAttribute("EnforcementMode", "NotConfigured"));
+                if (type == "Exe")
+                {
+                    collection.Add(Extensions());
+                }
+
+                root.Add(collection);
+            }
+
+            return document.ToString(SaveOptions.DisableFormatting);
+        }
+
+        /// <summary>The EXE-only policy an earlier release wrote: the same XML without the packaged-app collection.</summary>
+        internal static string WithoutPackagedApps(string xml)
+        {
+            XDocument document = XDocument.Parse(xml);
+            document.Root!.Elements("RuleCollection").Where(collection => (string?)collection.Attribute("Type") == "Appx").Remove();
             return document.ToString(SaveOptions.DisableFormatting);
         }
 

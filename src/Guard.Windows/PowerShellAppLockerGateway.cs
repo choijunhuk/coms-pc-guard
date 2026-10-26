@@ -74,7 +74,8 @@ namespace Guard.Windows
             ArgumentNullException.ThrowIfNull(title);
             ArgumentNullException.ThrowIfNull(message);
             // WTSSendMessage shows a message box in another session (the service runs in session 0); bWait=false returns at once.
-            _ = WTSSendMessageW(IntPtr.Zero, sessionId, title, title.Length * 2, message, message.Length * 2, MessageBoxWarning, 60, out _, false);
+            // Topmost and foreground so the warning is not left behind a game window during its 15 s grace period.
+            _ = WTSSendMessageW(IntPtr.Zero, sessionId, title, title.Length * 2, message, message.Length * 2, MessageBoxWarning | MessageBoxTopmost | MessageBoxSetForeground, 60, out _, false);
             return Task.CompletedTask;
         }
 
@@ -84,6 +85,8 @@ namespace Guard.Windows
         }
 
         private const int MessageBoxWarning = 0x00000030;
+        private const int MessageBoxSetForeground = 0x00010000;
+        private const int MessageBoxTopmost = 0x00040000;
 
         [LibraryImport("wtsapi32.dll", StringMarshalling = StringMarshalling.Utf16)]
         [return: MarshalAs(UnmanagedType.Bool)]

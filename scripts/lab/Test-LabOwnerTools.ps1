@@ -1,10 +1,12 @@
 ﻿# Lab VM only, as the built-in Administrator. Drives the installed product through one phase of the owner-tools
-# check (install, setup, enforce, grant, revoke, log, admin-smoke, uninstall) and prints what it observed.
-# Phases that change policy also report how long the service took to publish the new version in status.json.
+# check (install, upgrade, setup, enforce, grant, revoke, log, packaged-apps, admin-smoke, uninstall) and prints
+# what it observed. Phases that change policy also report how long the service took to publish the new version.
 param(
-    [Parameter(Mandatory)] [ValidateSet('install', 'setup', 'enforce', 'grant', 'revoke', 'log', 'admin-smoke', 'uninstall')] [string] $Phase,
+    [Parameter(Mandatory)] [ValidateSet('install', 'upgrade', 'setup', 'enforce', 'grant', 'revoke', 'log', 'packaged-apps', 'admin-smoke', 'uninstall')] [string] $Phase,
     [string] $Package = 'C:\Users\Public\coms-lab\package.zip',
-    [string] $Member = 'ComsGuardMemberA'
+    [string] $Member = 'ComsGuardMemberA',
+    # grant: how long the allowance lasts. A few minutes lets the end (warning, then stop) be watched.
+    [int] $Minutes = 120
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -71,10 +73,40 @@ switch ($Phase) {
         Wait-Applied $since
         (Get-AppLockerPolicy -Local).RuleCollections | ForEach-Object { "collection $($_.RuleCollectionType) mode=$($_.EnforcementMode) rules=$($_.Count)" }
     }
+    'upgrade' {
+        # Recreates what a release before the packaged-app fix left (EXE collection only), installs the package over
+        # it without touching the data folder, and reports when the service replaces the policy.
+        Stop-Service ComsPcGuard -ErrorAction SilentlyContinue
+        $local = [xml](Get-AppLockerPolicy -Local -Xml)
+        foreach ($appx in @($local.AppLockerPolicy.RuleCollection | Where-Object { $_.Type -eq 'Appx' })) { $null = $local.AppLockerPolicy.RemoveChild($appx) }
+        $legacy = Join-Path $env:TEMP 'coms-legacy-policy.xml'
+        $local.OuterXml | Set-Content -LiteralPath $legacy -Encoding UTF8
+        Set-AppLockerPolicy -XmlPolicy $legacy
+        'before: ' + (((Get-AppLockerPolicy -Local).RuleCollections | ForEach-Object { "$($_.RuleCollectionType)/$($_.EnforcementMode)/$($_.Count)" }) -join ' ')
+        $folder = 'C:\Users\Public\coms-lab\package'
+        if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
+        Expand-Archive -LiteralPath $Package -DestinationPath $folder
+        $since = [DateTimeOffset]::UtcNow
+        & (Join-Path $folder 'Install-ComsPcGuard.ps1') | Out-Null
+        'installed in {0:N0} s' -f ([DateTimeOffset]::UtcNow - $since).TotalSeconds
+        $deadline = $since.AddSeconds(120)
+        while ([DateTimeOffset]::UtcNow -lt $deadline -and (Get-AppLockerPolicy -Local -Xml) -notmatch 'Type="Appx"') { Start-Sleep -Milliseconds 500 }
+        'after {0:N1} s: {1}' -f ([DateTimeOffset]::UtcNow - $since).TotalSeconds, (((Get-AppLockerPolicy -Local).RuleCollections | ForEach-Object { "$($_.RuleCollectionType)/$($_.EnforcementMode)/$($_.Count)" }) -join ' ')
+        Invoke-Guard status
+    }
     'grant' {
         $since = [DateTimeOffset]::UtcNow
-        Invoke-Guard grant $Member ping 120
+        Invoke-Guard grant $Member ping $Minutes
         Wait-Applied $since
+    }
+    'packaged-apps' {
+        # Regression check for AppLocker event 8027 (every packaged app blocked while EXE rules are enforced without
+        # packaged-app rules) and any packaged app blocked since the last start of Windows.
+        (Get-AppLockerPolicy -Local).RuleCollections | ForEach-Object { "collection $($_.RuleCollectionType) mode=$($_.EnforcementMode) rules=$($_.Count)" }
+        $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+        $blocked = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-AppLocker/Packaged app-Execution'; Id = 8022, 8025, 8027; StartTime = $boot } -ErrorAction SilentlyContinue)
+        "packaged-app blocks since $($boot.ToString('s')): $($blocked.Count)"
+        $blocked | Select-Object -First 5 | ForEach-Object { "  $($_.TimeCreated.ToString('HH:mm:ss')) id=$($_.Id) $($_.Message -replace '\s+', ' ')" }
     }
     'revoke' {
         $since = [DateTimeOffset]::UtcNow

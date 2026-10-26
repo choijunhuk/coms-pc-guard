@@ -16,11 +16,16 @@ namespace Guard.Service.AppLocker
             ArgumentNullException.ThrowIfNull(preview);
             return !preview.IsCompleteStandalonePolicy
                 ? throw new InvalidOperationException("Only a complete standalone AppLocker policy preview can be serialized.")
-                : WriteRules(preview.EnforcementMode, preview.PolicyVersion, preview.DesiredOwnedRules);
+                : WriteRules(preview.EnforcementMode, preview.PolicyVersion, preview.DesiredOwnedRules, allowPackagedApps: true);
         }
 
-        /// <summary>The baseline Description carries the policy version so an observed local policy identifies itself.</summary>
-        internal static string WriteRules(AppLockerEnforcementMode enforcementMode, long policyVersion, IReadOnlyList<AppLockerOwnedRule> ownedRules)
+        /// <summary>
+        /// The baseline Description carries the policy version so an observed local policy identifies itself.
+        /// Windows blocks every packaged app (Start, Settings, Calculator, Notepad...) while EXE rules are enforced and the
+        /// packaged-app collection is empty (AppLocker event 8027), so <paramref name="allowPackagedApps"/> adds a packaged-app
+        /// collection in the same mode that allows every signed packaged app. Only a legacy artifact omits it.
+        /// </summary>
+        internal static string WriteRules(AppLockerEnforcementMode enforcementMode, long policyVersion, IReadOnlyList<AppLockerOwnedRule> ownedRules, bool allowPackagedApps)
         {
             AppLockerOwnedRule[] rules = [.. ownedRules.OrderBy(rule => rule.Id, StringComparer.Ordinal)];
             if (rules.Length == 0 || rules.Select(rule => rule.Collection).Distinct().Count() != 1
@@ -44,7 +49,12 @@ namespace Guard.Service.AppLocker
                 new XAttribute("Type", "Exe"),
                 new XAttribute("EnforcementMode", EnforcementMode(enforcementMode)),
                 rules.Select(rule => Rule(rule, policyVersion)));
-            XDocument document = new(new XElement("AppLockerPolicy", new XAttribute("Version", "1"), collection));
+            // Windows reports the packaged-app collection first; the order has no effect on enforcement.
+            XDocument document = new(new XElement(
+                "AppLockerPolicy",
+                new XAttribute("Version", "1"),
+                allowPackagedApps ? PackagedAppsCollection(enforcementMode) : null,
+                collection));
             return document.ToString(SaveOptions.DisableFormatting);
         }
 
@@ -57,6 +67,35 @@ namespace Guard.Service.AppLocker
         internal const string OwnedRuleDescription = "COMS PC Guard owned rule";
         internal const string BaselineName = "COMS PC Guard baseline";
         internal const string RuleNamePrefix = "COMS PC Guard ";
+        internal const string PackagedAppsBaselineName = "COMS PC Guard packaged apps";
+        internal const string PackagedAppsBaselineDescription = "COMS PC Guard owned packaged-app baseline";
+
+        internal static readonly string PackagedAppsBaselineId =
+            DeterministicRuleId.Create(AppLockerCollectionType.Appx, AppLockerRuleAction.Allow, "S-1-1-0", string.Empty, string.Empty);
+
+        /// <summary>The same shape as Windows' "(Default Rule) All signed packaged apps", owned by this product.</summary>
+        private static XElement PackagedAppsCollection(AppLockerEnforcementMode enforcementMode)
+        {
+            return new XElement(
+                "RuleCollection",
+                new XAttribute("Type", "Appx"),
+                new XAttribute("EnforcementMode", EnforcementMode(enforcementMode)),
+                new XElement(
+                    "FilePublisherRule",
+                    new XAttribute("Id", PackagedAppsBaselineId),
+                    new XAttribute("Name", PackagedAppsBaselineName),
+                    new XAttribute("Description", PackagedAppsBaselineDescription),
+                    new XAttribute("UserOrGroupSid", "S-1-1-0"),
+                    new XAttribute("Action", "Allow"),
+                    new XElement(
+                        "Conditions",
+                        new XElement(
+                            "FilePublisherCondition",
+                            new XAttribute("PublisherName", "*"),
+                            new XAttribute("ProductName", "*"),
+                            new XAttribute("BinaryName", "*"),
+                            new XElement("BinaryVersionRange", new XAttribute("LowSection", "0.0.0.0"), new XAttribute("HighSection", "*"))))));
+        }
 
         private static XElement Rule(AppLockerOwnedRule rule, long policyVersion)
         {

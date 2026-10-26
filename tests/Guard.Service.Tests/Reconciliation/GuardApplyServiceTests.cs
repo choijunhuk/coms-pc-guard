@@ -1,4 +1,6 @@
+using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
+using Guard.Service.Enforcement;
 using Guard.Service.Reconciliation;
 using Guard.Service.Storage;
 using Guard.Service.Tests.TestSupport;
@@ -81,6 +83,33 @@ namespace Guard.Service.Tests.Reconciliation
                 Assert.AreEqual(GuardApplyStatus.Applied, result.Status, result.Outcome?.DiagnosticCode);
                 Assert.AreEqual(1, result.Artifact!.PolicyVersion);
                 Assert.AreEqual(2, gateway.ApplyCount);
+            }
+        }
+
+        [TestMethod]
+        public async Task Apply_AfterUpgradeFromAnExeOnlyRelease_ReplacesThePolicySoPackagedAppsRun()
+        {
+            await using TemporarySqliteDatabase db = new();
+            ManualTimeProvider clock = new(AppLockerTestData.InsideWindow);
+            (GuardApplyService service, FakeAppLockerGateway gateway, SqlitePolicyStateStore store, PolicyOperationGate gate) = await CreateAsync(db, clock);
+            using (gate)
+            {
+                // What an earlier release left behind: an EXE-only local policy and the same revision stored as last good.
+                string legacyXml = AppLockerTestData.AsWindowsReports(AppLockerTestData.WithoutPackagedApps(AppLockerTestData.Artifact().Xml));
+                Assert.IsTrue(AppLockerArtifact.TryFromObserved(ObservedAppLockerPolicy.Parse(legacyXml), out AppLockerArtifact? legacy, out _));
+                DateTimeOffset now = clock.GetUtcNow();
+                ReconciliationAttempt attempt = new(Guid.NewGuid(), legacy!.PolicyVersion, legacy.Sha256Hex, now);
+                await store.SaveCandidateAndBeginAttemptAsync(legacy.ToPolicyArtifact(now), attempt, CancellationToken.None);
+                await store.CommitObservedSuccessAsync(attempt.AttemptId, new EffectivePolicyObservation(Guid.NewGuid(), legacy.PolicyVersion, legacy.Sha256Hex, now, legacy.RequiredProtection, OwnedPolicyState.Present, false, "{}"), now, CancellationToken.None);
+                gateway.LocalPolicyXml = legacyXml;
+
+                GuardApplyResult result = await service.ApplyAsync(Configuration(), CancellationToken.None);
+
+                Assert.AreEqual(GuardApplyStatus.Applied, result.Status, result.Outcome?.DiagnosticCode);
+                Assert.IsTrue(result.Artifact!.AllowsPackagedApps);
+                Assert.AreEqual(legacy.PolicyVersion + 1, result.Artifact.PolicyVersion);
+                StringAssert.Contains(gateway.LocalPolicyXml, "<RuleCollection Type=\"Appx\" EnforcementMode=\"Enabled\"><FilePublisherRule");
+                Assert.AreEqual(result.Artifact.Sha256Hex, (await store.GetLastGoodArtifactAsync(CancellationToken.None))!.Sha256Hex);
             }
         }
 

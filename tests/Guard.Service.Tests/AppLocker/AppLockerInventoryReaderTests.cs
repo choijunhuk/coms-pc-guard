@@ -64,6 +64,18 @@ namespace Guard.Service.Tests.AppLocker
         }
 
         [TestMethod]
+        public void Read_ForeignPackagedAppRuleOnlyInEffectiveView_IsExternalGroupPolicy()
+        {
+            string local = AppLockerTestData.AsWindowsReports(AppLockerTestData.Artifact().Xml);
+            string effective = local.Replace("COMS PC Guard packaged apps", "Contoso packaged apps", StringComparison.Ordinal);
+
+            AppLockerInventoryReading reading = AppLockerInventoryReader.Read(State(local, effective));
+
+            Assert.AreEqual(AppLockerPolicyPresence.ProductOwned, reading.Inventory.Local);
+            Assert.AreEqual(AppLockerPolicyPresence.External, reading.Inventory.EffectiveGroupPolicy);
+        }
+
+        [TestMethod]
         public void Read_MdmCodeIntegrityAndManualService_AreReported()
         {
             AppLockerInventoryReading reading = AppLockerInventoryReader.Read(State(AppLockerTestData.EmptyWindowsPolicy(), startMode: "Manual", mdm: true, ci: ["Contoso base policy"]));

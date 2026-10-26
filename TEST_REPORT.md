@@ -77,5 +77,20 @@ Read-only physical inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.
 | Member reads own status only; cannot write status or read policy | `PASS` |
 | Running game warned then stopped after 15 s | `PASS` (after start-time comparison fix) |
 | Activity record and CSV export | `PASS` |
-| Owner screen and notifier start-up | `PASS` (visual pop-ups at a member desktop `NOT_RUN`) |
+| Owner screen and notifier start-up | `PASS` (visual pop-ups at a member desktop: see the next section) |
 | Uninstall | `PASS` |
+
+## 2026-10-26 Member desktop (`fix/packaged-apps`)
+
+- Full tests: 362/362 in default and `TZ=UTC` runs (Core 117, Service 229, Cli 10, Windows 6). New: packaged-app collection written in the same mode, recognized only when exactly ours, EXE-only policy from the previous build recognized but never equal (replaced on the next pass, including from a stored legacy last-good revision), legacy canonical JSON still loads, foreign packaged-app rule in the effective view is external.
+- Lab, with a member signed in at the console (details in `docs/evidence/2026-10-26-member-desktop.md`):
+
+| Scenario | Classification |
+| --- | --- |
+| Packaged apps in blocking mode (Start, Calculator, Notepad...) | `FAIL → FIXED` (every packaged app was blocked, event 8027) |
+| Upgrade over an EXE-only policy | `PASS` (replaced 12-15 s after install) |
+| Member alert while "Do not disturb" is on | `FAIL → FIXED` (banner hidden; now the notifier's own corner window) |
+| Running game at allowance end: warning over the game, then stop | `PASS` (stopped 17-18 s after the warning) |
+| Relaunch during restriction blocked and recorded | `PASS` |
+| Notifier autostart after restart | `PASS` |
+| Restart | Windows shut down cleanly in 33 s; the VM's own reboot hung (VirtualBox, not product) |

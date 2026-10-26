@@ -53,7 +53,7 @@ namespace Guard.Windows
         {
             string json = await _session.InvokeAsync(
                 "terminate",
-                new Dictionary<string, object?> { ["pid"] = processId, ["startUtc"] = startedAtUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture) },
+                new Dictionary<string, object?> { ["pid"] = processId, ["startUtc"] = startedAtUtc.UtcDateTime.ToString("o", CultureInfo.InvariantCulture) },
                 cancellationToken).ConfigureAwait(false);
             return NativeResponseParser.ParseTerminated(json);
         }

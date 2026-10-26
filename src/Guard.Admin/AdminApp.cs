@@ -241,7 +241,7 @@ namespace Guard.Admin
                 Row(_days),
                 Row(Caption("시작"), _start, Caption("끝"), _end, _allDay),
                 Row(save, clear),
-                Heading("쉬는 날 — 이 날은 주간 시간표 대신 아래 설정을 따라요"),
+                Heading("쉬는 날 — 고른 날은 하루 종일 제한하지 않아요"),
                 Row(_holidayDate, addHoliday, removeHoliday));
         }
 

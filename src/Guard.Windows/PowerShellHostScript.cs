@@ -119,7 +119,9 @@ namespace Guard.Windows
             function Stop-GuardProcess([int] $ProcessId, [string] $StartUtc) {
                 $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$ProcessId"
                 if (-not $process) { return [pscustomobject]@{ terminated = $false; reason = 'gone' } }
-                if ($process.CreationDate.ToUniversalTime().ToString('o') -ne $StartUtc) { return [pscustomobject]@{ terminated = $false; reason = 'pid-reused' } }
+                # Compare instants, not text: .NET writes "+00:00" where PowerShell writes "Z" for the same UTC time.
+                $expected = [DateTimeOffset]::Parse($StartUtc, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+                if ([Math]::Abs(($process.CreationDate.ToUniversalTime() - $expected).TotalMilliseconds) -ge 1) { return [pscustomobject]@{ terminated = $false; reason = 'pid-reused' } }
                 Stop-Process -Id $ProcessId -Force
                 [pscustomobject]@{ terminated = $true; reason = 'stopped' }
             }

@@ -109,11 +109,15 @@ $admin = Join-Path $InstallDirectory 'guard-admin.exe'
 $shell = New-Object -ComObject WScript.Shell
 $shortcutName = 'COMS PC Guard 관리.lnk'
 foreach ($folder in [Environment]::GetFolderPath('CommonPrograms'), [Environment]::GetFolderPath('Desktop')) {
-    $shortcut = $shell.CreateShortcut((Join-Path $folder $shortcutName))
+    # WScript.Shell saves through the ANSI code page, which cannot hold Korean on a non-Korean Windows (the lab
+    # saw "COMS PC Guard ??.lnk" fail). Save under an ASCII name, then rename with Unicode-safe Move-Item.
+    $temporary = Join-Path $folder 'ComsPcGuardAdmin.lnk'
+    $shortcut = $shell.CreateShortcut($temporary)
     $shortcut.TargetPath = $admin
     $shortcut.WorkingDirectory = $InstallDirectory
-    $shortcut.Description = 'COMS PC Guard 관리 화면'
+    $shortcut.Description = 'COMS PC Guard'
     $shortcut.Save()
+    Move-Item -LiteralPath $temporary -Destination (Join-Path $folder $shortcutName) -Force
 }
 
 (Get-Service -Name $serviceName) | Format-Table Name, Status, StartType -AutoSize

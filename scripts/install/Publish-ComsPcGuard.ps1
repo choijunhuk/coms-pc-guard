@@ -5,7 +5,9 @@
 # under artifacts\ on the repository drive rather than in %TEMP%, which keeps a nearly full system drive out of it.
 param(
     [string] $Output,
-    [string] $Dotnet
+    [string] $Dotnet,
+    # Skip the single zip next to the output folder (artifacts\publish\COMS-PC-Guard-win-x64-<date>.zip).
+    [switch] $NoZip
 )
 $ErrorActionPreference = 'Stop'
 
@@ -52,4 +54,16 @@ if (Test-Path -LiteralPath $guide) {
 }
 Get-ChildItem -LiteralPath $Output -File | ForEach-Object {
     '{0,-28} {1,10:N0} bytes  sha256 {2}' -f $_.Name, $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+if (-not $NoZip) {
+    # One file to hand over: unzip anywhere on the club PC and double-click install.cmd.
+    $zip = Join-Path (Split-Path -Parent $Output) ('COMS-PC-Guard-win-x64-{0}.zip' -f (Get-Date -Format 'yyyyMMdd'))
+    if (Test-Path -LiteralPath $zip) {
+        Remove-Item -LiteralPath $zip -Force
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::CreateFromDirectory($Output, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
+    $item = Get-Item -LiteralPath $zip
+    '{0,-28} {1,10:N0} bytes  sha256 {2}' -f $item.Name, $item.Length, (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 }

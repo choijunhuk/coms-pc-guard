@@ -17,3 +17,8 @@ indent_size = 2
 [*.cs]
 dotnet_analyzer_diagnostic.severity = warning
 dotnet_diagnostic.CA*.severity = warning
+
+# "Populate switch" fixes insert `throw new NotImplementedException()` arms ahead of an intentional
+# default arm; dotnet format applied them silently and broke guard apply. Keep defaults explicit instead.
+dotnet_diagnostic.IDE0010.severity = none
+dotnet_diagnostic.IDE0072.severity = none

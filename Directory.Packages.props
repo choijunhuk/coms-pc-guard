@@ -6,5 +6,7 @@
 
   <ItemGroup>
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.EventLog" Version="10.0.12" />
   </ItemGroup>
 </Project>

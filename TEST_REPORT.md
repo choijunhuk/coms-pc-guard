@@ -42,3 +42,23 @@ Read-only physical inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.
 | Guard.Service SQLite/reconciliation behavior | `PASS` (125/125 per run) |
 | Windows evidence provider/signature/AppLocker/service/ACL/IPC/UI/installer/termination | `BLOCKED_WINDOWS_VM` |
 | WiX eligibility/EULA | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |
+
+## 2026-10-26 lean native spike and product path
+
+- Host: Windows 11 Home build 26200; SDK repository-local .NET 10.0.401; lab guest Windows 11 Enterprise Evaluation 25H2 build 26200 in VirtualBox 7.2.16.
+- Portable matrix: locked restore, format verification, Release build, 316/316 tests in default and `TZ=UTC` runs (Core 117, Service 191, Cli 4, Windows 4).
+- Native lab results (details and raw-evidence location in `docs/evidence/2026-10-26-native-spike.md`):
+
+| Scenario | Classification |
+| --- | --- |
+| S1 baseline inventory | `PASS` |
+| S2 per-member block, same-product control allowed | `PASS` |
+| S3 renamed/copied binary still blocked | `PASS` |
+| S4 temporary allow reaches a running session (2.59 s) | `PASS` |
+| S5 re-restriction reaches the same session (1.96 s) | `PASS` |
+| S6 AuditOnly 8004 -> 8003 (2.82 s) | `PASS` |
+| S7 reboot with service installed | `PASS` |
+| S8 clear / uninstall | `PASS` after DR-010 fix (empty policy alone left rules enforced) |
+| `guard apply` incl. recovery of an interrupted attempt | `PASS` |
+| Service install, policy-file change applied (16.9 s / 11.7 s in the slow nested VM) | `PASS` functional; latency target `NOT_RUN` on real hardware |
+| Running-process termination, GPO/MDM coexistence, multi-session, sleep/resume | `NOT_RUN` |

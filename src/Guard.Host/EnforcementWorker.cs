@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
+using Guard.Service.Enforcement;
 using Guard.Service.Reconciliation;
 using Guard.Service.Storage;
 using Guard.Windows;
@@ -30,6 +31,7 @@ namespace Guard.Host
             using PolicyOperationGate gate = new();
             using PowerShellAppLockerGateway gateway = new();
             GuardApplyService service = new(gateway, store, clock, gate);
+            RunningGameEnforcer enforcer = new(gateway, clock);
 
             using SemaphoreSlim wake = new(0);
             using FileSystemWatcher watcher = new(options.DataDirectory, Path.GetFileName(options.PolicyPath))
@@ -52,7 +54,7 @@ namespace Guard.Host
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                TimeSpan delay = await RunPassAsync(service, stoppingToken).ConfigureAwait(false);
+                TimeSpan delay = await RunPassAsync(service, enforcer, stoppingToken).ConfigureAwait(false);
                 try
                 {
                     if (await wake.WaitAsync(delay, stoppingToken).ConfigureAwait(false))
@@ -68,7 +70,7 @@ namespace Guard.Host
             }
         }
 
-        private async Task<TimeSpan> RunPassAsync(GuardApplyService service, CancellationToken cancellationToken)
+        private async Task<TimeSpan> RunPassAsync(GuardApplyService service, RunningGameEnforcer enforcer, CancellationToken cancellationToken)
         {
             GuardConfiguration configuration;
             try
@@ -120,7 +122,34 @@ namespace Guard.Host
                         break;
                 }
 
-                return EnforcementSchedule.NextRunDelay(clock.GetUtcNow(), result.Pipeline?.NextTransitionUtc, result.Status);
+                TimeSpan delay = EnforcementSchedule.NextRunDelay(clock.GetUtcNow(), result.Pipeline?.NextTransitionUtc, result.Status);
+                bool enforced = result.Status is GuardApplyStatus.Applied or GuardApplyStatus.Unchanged
+                    && result.Artifact?.EnforcementMode == AppLockerEnforcementMode.Enabled
+                    && result.Pipeline is not null;
+                if (!enforced)
+                {
+                    enforcer.Reset();
+                    return delay;
+                }
+
+                RunningGameSweep sweep = await enforcer.SweepAsync(configuration, result.Pipeline!.Decisions, cancellationToken).ConfigureAwait(false);
+                foreach (RunningGameAction warned in sweep.Warned)
+                {
+                    LogGameWarned(warned.AppName, warned.ProcessId, warned.SessionId);
+                }
+
+                foreach (RunningGameAction stopped in sweep.Stopped)
+                {
+                    LogGameStopped(stopped.AppName, stopped.ProcessId, stopped.SessionId);
+                }
+
+                if (sweep.NextDeadlineUtc is { } deadline)
+                {
+                    TimeSpan untilDeadline = deadline - clock.GetUtcNow() + EnforcementSchedule.BoundaryMargin;
+                    delay = untilDeadline < delay ? (untilDeadline > TimeSpan.Zero ? untilDeadline : EnforcementSchedule.BoundaryMargin) : delay;
+                }
+
+                return delay;
             }
             catch (Exception exception) when (exception is InvalidOperationException or TimeoutException or FormatException or IOException or UnauthorizedAccessException)
             {
@@ -155,5 +184,11 @@ namespace Guard.Host
 
         [LoggerMessage(EventId = 1008, Level = LogLevel.Warning, Message = "Policy file {Path} is unreadable ({Reason}); using the previous version (.bak)")]
         private partial void LogPolicyFromBackup(string path, string? reason);
+
+        [LoggerMessage(EventId = 1010, Level = LogLevel.Information, Message = "Warned session {SessionId}: {App} (PID {ProcessId}) will be stopped after the grace period")]
+        private partial void LogGameWarned(string app, int processId, int sessionId);
+
+        [LoggerMessage(EventId = 1011, Level = LogLevel.Warning, Message = "Stopped {App} (PID {ProcessId}) in session {SessionId} because its restriction started")]
+        private partial void LogGameStopped(string app, int processId, int sessionId);
     }
 }

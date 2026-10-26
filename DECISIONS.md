@@ -53,3 +53,19 @@ Measured in the lab VM (`docs/evidence/2026-10-26-native-spike.md`): replacing t
 Each distinct compiled result gets its own durable revision (the Owner's `policyVersion` names the file, not the compiled rules), because the store keeps revisions immutable (DR-003).
 
 `dotnet format` auto-fixes for IDE0010/IDE0072 inserted `throw new NotImplementedException()` arms ahead of intentional default arms and crashed `guard apply` in the VM; both rules are disabled in `.editorconfig`.
+
+## DR-011 — Owner tools: files with ACLs instead of IPC, one PowerShell host, activity record
+
+The Owner edits one policy file (`policy.json`); the command line and the Owner screen both re-read it, check that the current SID is `ownerSid`, edit through `GuardPolicyEditor`, and replace it atomically (temporary file flushed to disk, `File.Replace` keeping `.bak`). The service falls back to `.bak` when the file is unreadable. No IPC channel exists: the data folder is SYSTEM/Administrators only, so file ACLs are the trust boundary.
+
+The service publishes `status\status.json` after every pass. The installer makes that one folder readable by Users, so the member notifier shows a member their own state without any write path back. The status carries the policy file version the service last applied, so the Owner screen can say when an edit has taken effect.
+
+Each process keeps one Windows PowerShell 5.1 host alive and talks to it in JSON lines (`read`, `apply`, `identify`, `processes`, `terminate`, `users`, `events`). This cut the lab's file-change-to-applied time from 12-17 s to about 3-8 s. Process identity before a stop is PID + creation time compared as instants (the lab showed text comparison failing on `Z` vs `+00:00`).
+
+Games running when a restriction starts are warned through `WTSSendMessage` and stopped after 15 s. The activity record is JSON lines per UTC day under `logs\`, pruned after 30 days or past 100 MiB. It records settings changes, applies, problems (once until they change), warnings and stops, and AppLocker 8003/8004 launches by registered members (bookmarked by event record ID). CSV export adds a BOM for Korean spreadsheets and neutralises cells that a spreadsheet would treat as formulas.
+
+`dotnet format`'s populate-switch fixer had also added empty `case X: break;` arms ahead of the worker's logging `default`, silencing failure logs; the switch was rewritten and the check in OPERATIONS.md now names this too.
+
+## DR-012 — Zip and double-click launchers until the WiX EULA is accepted
+
+WiX v7 needs the Owner's own `wix7` EULA acceptance (issue #3), which is not something to accept on their behalf. Until then the package is a zip of four self-contained single-file programs plus `install.cmd`/`uninstall.cmd` (self-elevating launchers for the PowerShell scripts) and the Korean guide. Install scripts carry a UTF-8 BOM because Windows PowerShell 5.1 reads BOM-less scripts in the ANSI code page. Shortcuts with Korean names are saved under an ASCII name and renamed, because WScript.Shell saves through the ANSI code page (failed in the English lab VM). Each program is self-contained (about 390 MB in total) rather than sharing one runtime folder, trading size for isolation and simpler upgrades.

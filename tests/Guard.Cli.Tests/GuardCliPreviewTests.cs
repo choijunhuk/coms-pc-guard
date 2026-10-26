@@ -80,7 +80,7 @@ namespace Guard.Cli.Tests
             Assert.AreEqual(GuardCli.Success, code);
             StringAssert.Contains(output, "Restricted");
             StringAssert.Contains(output, "XML SHA-256:");
-            XElement deny = XDocument.Load(xmlPath).Descendants("FilePublisherRule").Single();
+            XElement deny = XDocument.Load(xmlPath).Descendants("FilePublisherRule").Single(rule => (string?)rule.Attribute("Action") == "Deny");
             Assert.AreEqual(MemberA, (string?)deny.Attribute("UserOrGroupSid"));
             Assert.AreEqual("MICROSOFT® WINDOWS® OPERATING SYSTEM", (string?)deny.Element("Conditions")!.Element("FilePublisherCondition")!.Attribute("ProductName"));
         }

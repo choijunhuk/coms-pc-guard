@@ -15,13 +15,22 @@ namespace Guard.Service.AppLocker
     /// </summary>
     public sealed class AppLockerArtifact
     {
-        public const string Format = "coms-applocker-exe/1";
+        /// <summary>The EXE rules plus a packaged-app collection that allows every signed packaged app (DR-013).</summary>
+        public const string Format = "coms-applocker/2";
 
-        private AppLockerArtifact(long policyVersion, AppLockerEnforcementMode enforcementMode, IEnumerable<AppLockerOwnedRule> rules)
+        /// <summary>
+        /// Earlier releases wrote the EXE collection alone, which makes Windows block every packaged app (Start, Settings,
+        /// Calculator...). Such a policy is still recognized as ours, and stored revisions still load, but it never equals a
+        /// newly compiled artifact, so the next pass replaces it.
+        /// </summary>
+        public const string LegacyExeOnlyFormat = "coms-applocker-exe/1";
+
+        private AppLockerArtifact(long policyVersion, AppLockerEnforcementMode enforcementMode, IEnumerable<AppLockerOwnedRule> rules, bool allowsPackagedApps)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(policyVersion);
             PolicyVersion = policyVersion;
             EnforcementMode = enforcementMode;
+            AllowsPackagedApps = allowsPackagedApps;
             Rules = Array.AsReadOnly(rules.OrderBy(rule => rule.Id, StringComparer.Ordinal).ToArray());
             CanonicalJson = BuildCanonicalJson();
             Sha256Hex = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(CanonicalJson)));
@@ -31,13 +40,16 @@ namespace Guard.Service.AppLocker
 
         public AppLockerEnforcementMode EnforcementMode { get; }
 
+        /// <summary>False only for a policy written by an earlier release (<see cref="LegacyExeOnlyFormat"/>).</summary>
+        public bool AllowsPackagedApps { get; }
+
         public IReadOnlyList<AppLockerOwnedRule> Rules { get; }
 
         public string CanonicalJson { get; }
 
         public string Sha256Hex { get; }
 
-        public string Xml => AppLockerPolicyXmlWriter.WriteRules(EnforcementMode, PolicyVersion, Rules);
+        public string Xml => AppLockerPolicyXmlWriter.WriteRules(EnforcementMode, PolicyVersion, Rules, AllowsPackagedApps);
 
         public EnforcementProtectionLevel RequiredProtection => EnforcementMode == AppLockerEnforcementMode.Enabled
             ? EnforcementProtectionLevel.PreExecutionBlock
@@ -47,14 +59,14 @@ namespace Guard.Service.AppLocker
         {
             ArgumentNullException.ThrowIfNull(preview);
             return preview.EligibleForNativeApplyRevalidation
-                ? new AppLockerArtifact(preview.PolicyVersion, preview.EnforcementMode, preview.DesiredOwnedRules)
+                ? new AppLockerArtifact(preview.PolicyVersion, preview.EnforcementMode, preview.DesiredOwnedRules, allowsPackagedApps: true)
                 : throw new InvalidOperationException($"The preview is not eligible: {string.Join(", ", preview.Blockers)}");
         }
 
         /// <summary>
-        /// The product baseline alone (Allow Everyone, path *). Measured in the lab: replacing a policy takes effect in about 2 s,
-        /// but replacing it with an EMPTY policy leaves the last non-empty rules enforced until reboot (gpupdate does not help).
-        /// Clearing therefore applies this allow-all step first, so whatever stays cached allows everything.
+        /// The product baselines alone (Allow Everyone: every file, every signed packaged app). Measured in the lab: replacing a
+        /// policy takes effect in about 2 s, but replacing it with an EMPTY policy leaves the last non-empty rules enforced until
+        /// reboot (gpupdate does not help). Clearing therefore applies this allow-all step first, so whatever stays cached allows everything.
         /// </summary>
         public static AppLockerArtifact AllowAllBaseline(long revision)
         {
@@ -65,7 +77,7 @@ namespace Guard.Service.AppLocker
                 string.Empty,
                 string.Empty,
                 new AppLockerPathCondition());
-            return new AppLockerArtifact(revision, AppLockerEnforcementMode.Enabled, [baseline]);
+            return new AppLockerArtifact(revision, AppLockerEnforcementMode.Enabled, [baseline], allowsPackagedApps: true);
         }
 
         public PolicyArtifact ToPolicyArtifact(DateTimeOffset createdAtUtc)
@@ -81,7 +93,8 @@ namespace Guard.Service.AppLocker
             {
                 using JsonDocument document = JsonDocument.Parse(canonicalJson);
                 JsonElement root = document.RootElement;
-                if (root.GetProperty("format").GetString() != Format)
+                string? format = root.GetProperty("format").GetString();
+                if (format is not (Format or LegacyExeOnlyFormat))
                 {
                     throw new FormatException($"Artifact format must be {Format}.");
                 }
@@ -116,7 +129,7 @@ namespace Guard.Service.AppLocker
                         parsedCondition));
                 }
 
-                AppLockerArtifact artifact = new(root.GetProperty("policyVersion").GetInt64(), mode, rules);
+                AppLockerArtifact artifact = new(root.GetProperty("policyVersion").GetInt64(), mode, rules, allowsPackagedApps: format == Format);
                 return artifact.CanonicalJson == canonicalJson
                     ? artifact
                     : throw new FormatException("Artifact JSON is not canonical or its rule IDs do not match their content.");
@@ -128,24 +141,33 @@ namespace Guard.Service.AppLocker
         }
 
         /// <summary>
-        /// Recognizes a local policy written by this product: one EXE collection, one baseline carrying the policy version,
-        /// and Deny rules whose IDs recompute from their own content. Display names alone never prove ownership.
+        /// Recognizes a local policy written by this product: one EXE collection with one baseline carrying the policy version
+        /// and Deny rules whose IDs recompute from their own content, plus (since <see cref="Format"/>) a packaged-app collection
+        /// holding only the packaged-app baseline in the same mode. Display names alone never prove ownership.
         /// </summary>
         public static bool TryFromObserved(ObservedAppLockerPolicy observed, out AppLockerArtifact? artifact, out string reason)
         {
             ArgumentNullException.ThrowIfNull(observed);
             artifact = null;
             IReadOnlyList<ObservedRuleSet> configured = observed.ConfiguredCollections;
-            if (configured.Count != 1 || configured[0].Type != "Exe" || configured[0].HasActiveExtensions)
+            ObservedRuleSet[] exe = [.. configured.Where(collection => collection.Type == "Exe")];
+            ObservedRuleSet[] packaged = [.. configured.Where(collection => collection.Type == "Appx")];
+            if (exe.Length != 1 || exe[0].HasActiveExtensions || packaged.Length > 1 || exe.Length + packaged.Length != configured.Count)
             {
                 reason = "NotSingleExeCollection";
                 return false;
             }
 
-            ObservedRuleSet collection = configured[0];
+            ObservedRuleSet collection = exe[0];
             if (!Enum.TryParse(collection.EnforcementMode, ignoreCase: false, out AppLockerEnforcementMode mode) || !Enum.IsDefined(mode))
             {
                 reason = "UnsupportedEnforcementMode";
+                return false;
+            }
+
+            if (packaged.Length == 1 && (!IsPackagedAppBaselineCollection(packaged[0]) || packaged[0].EnforcementMode != collection.EnforcementMode))
+            {
+                reason = "UnrecognizedPackagedAppRules";
                 return false;
             }
 
@@ -187,15 +209,36 @@ namespace Guard.Service.AppLocker
                 return false;
             }
 
-            artifact = new AppLockerArtifact(version.Value, mode, rules);
-            reason = "ProductOwned";
+            artifact = new AppLockerArtifact(version.Value, mode, rules, allowsPackagedApps: packaged.Length == 1);
+            reason = packaged.Length == 1 ? "ProductOwned" : "ProductOwnedWithoutPackagedApps";
             return true;
         }
 
-        /// <summary>True when the rule is one this product could have written, independent of the baseline version text.</summary>
-        internal static bool IsRecognizedOwnedRule(ObservedRule rule)
+        /// <summary>True when every rule in the collection is one this product could have written, independent of the baseline version text.</summary>
+        internal static bool IsRecognizedOwnedCollection(ObservedRuleSet collection)
         {
-            return TryBaseline(rule, out _, out _) || TryOwnedDeny(rule, out _);
+            ArgumentNullException.ThrowIfNull(collection);
+            return collection.Type switch
+            {
+                "Exe" => !collection.HasActiveExtensions && collection.Rules.All(rule => TryBaseline(rule, out _, out _) || TryOwnedDeny(rule, out _)),
+                "Appx" => IsPackagedAppBaselineCollection(collection),
+                _ => false,
+            };
+        }
+
+        private static bool IsPackagedAppBaselineCollection(ObservedRuleSet collection)
+        {
+            return collection is { Type: "Appx", HasActiveExtensions: false, Rules: [ObservedRule rule] }
+                && rule is
+                {
+                    Kind: "FilePublisherRule",
+                    Action: "Allow",
+                    Sid: "S-1-1-0",
+                    Condition: ObservedPublisherCondition { Publisher: "*", Product: "*", Binary: "*", LowSection: "0.0.0.0", HighSection: "*" },
+                }
+                && rule.Name == AppLockerPolicyXmlWriter.PackagedAppsBaselineName
+                && rule.Description == AppLockerPolicyXmlWriter.PackagedAppsBaselineDescription
+                && string.Equals(rule.Id, AppLockerPolicyXmlWriter.PackagedAppsBaselineId, StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool TryBaseline(ObservedRule rule, out AppLockerOwnedRule? owned, out long version)
@@ -266,7 +309,7 @@ namespace Guard.Service.AppLocker
             using (Utf8JsonWriter writer = new(stream))
             {
                 writer.WriteStartObject();
-                writer.WriteString("format", Format);
+                writer.WriteString("format", AllowsPackagedApps ? Format : LegacyExeOnlyFormat);
                 writer.WriteNumber("policyVersion", PolicyVersion);
                 writer.WriteString("enforcementMode", EnforcementMode.ToString());
                 writer.WriteStartArray("rules");

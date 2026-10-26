@@ -47,7 +47,7 @@ namespace Guard.Service.Tests.AppLocker
 
             Assert.IsTrue(result.Decisions.All(decision => decision.Decision == PolicyDecisionKind.Restricted));
             Assert.IsNotNull(result.PolicyXml);
-            XElement collection = XDocument.Parse(result.PolicyXml).Descendants("RuleCollection").Single();
+            XElement collection = XDocument.Parse(result.PolicyXml).Descendants("RuleCollection").Single(element => (string?)element.Attribute("Type") == "Exe");
             Assert.AreEqual("Enabled", (string?)collection.Attribute("EnforcementMode"));
             CollectionAssert.AreEquivalent(
                 new[] { MemberA, MemberB },
@@ -77,7 +77,7 @@ namespace Guard.Service.Tests.AppLocker
 
             Assert.IsTrue(result.Decisions.All(decision => decision.Decision == PolicyDecisionKind.AuditOnly));
             Assert.IsNotNull(result.PolicyXml);
-            Assert.AreEqual("AuditOnly", (string?)XDocument.Parse(result.PolicyXml).Descendants("RuleCollection").Single().Attribute("EnforcementMode"));
+            Assert.AreEqual("AuditOnly", (string?)XDocument.Parse(result.PolicyXml).Descendants("RuleCollection").Single(element => (string?)element.Attribute("Type") == "Exe").Attribute("EnforcementMode"));
             Assert.AreEqual(2, DenyRules(result.PolicyXml).Length);
         }
 

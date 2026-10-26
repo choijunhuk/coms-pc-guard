@@ -15,31 +15,53 @@ namespace Guard.Service.Tests.AppLocker
 
 #pragma warning disable CA1707
         [TestMethod]
-        public void Write_CompletePreview_ProducesExactStandaloneExePolicy()
+        public void Write_CompletePreview_ProducesExactStandalonePolicy()
         {
-            const string expected = "<AppLockerPolicy Version=\"1\"><RuleCollection Type=\"Exe\" EnforcementMode=\"Enabled\"><FilePublisherRule Id=\"0B789350-EF45-8EA9-9E24-90FE576F2131\" Name=\"COMS PC Guard app/publisher\" Description=\"COMS PC Guard owned rule\" UserOrGroupSid=\"S-1-5-21-1-2-3-1001\" Action=\"Deny\"><Conditions><FilePublisherCondition PublisherName=\"CN=Vendor\" ProductName=\"Product\" BinaryName=\"app.exe\"><BinaryVersionRange LowSection=\"1.0.0.0\" HighSection=\"2.0.0.0\" /></FilePublisherCondition></Conditions></FilePublisherRule><FilePathRule Id=\"276D1A78-BF0B-84AF-84BF-5690C22B9BD7\" Name=\"COMS PC Guard baseline\" Description=\"COMS PC Guard owned baseline; policy v1\" UserOrGroupSid=\"S-1-1-0\" Action=\"Allow\"><Conditions><FilePathCondition Path=\"*\" /></Conditions></FilePathRule></RuleCollection></AppLockerPolicy>";
+            string packagedId = DeterministicRuleId.Create(AppLockerCollectionType.Appx, AppLockerRuleAction.Allow, "S-1-1-0", string.Empty, string.Empty);
+            string expected = "<AppLockerPolicy Version=\"1\">"
+                + $"<RuleCollection Type=\"Appx\" EnforcementMode=\"Enabled\"><FilePublisherRule Id=\"{packagedId}\" Name=\"COMS PC Guard packaged apps\" Description=\"COMS PC Guard owned packaged-app baseline\" UserOrGroupSid=\"S-1-1-0\" Action=\"Allow\"><Conditions><FilePublisherCondition PublisherName=\"*\" ProductName=\"*\" BinaryName=\"*\"><BinaryVersionRange LowSection=\"0.0.0.0\" HighSection=\"*\" /></FilePublisherCondition></Conditions></FilePublisherRule></RuleCollection>"
+                + "<RuleCollection Type=\"Exe\" EnforcementMode=\"Enabled\"><FilePublisherRule Id=\"0B789350-EF45-8EA9-9E24-90FE576F2131\" Name=\"COMS PC Guard app/publisher\" Description=\"COMS PC Guard owned rule\" UserOrGroupSid=\"S-1-5-21-1-2-3-1001\" Action=\"Deny\"><Conditions><FilePublisherCondition PublisherName=\"CN=Vendor\" ProductName=\"Product\" BinaryName=\"app.exe\"><BinaryVersionRange LowSection=\"1.0.0.0\" HighSection=\"2.0.0.0\" /></FilePublisherCondition></Conditions></FilePublisherRule><FilePathRule Id=\"276D1A78-BF0B-84AF-84BF-5690C22B9BD7\" Name=\"COMS PC Guard baseline\" Description=\"COMS PC Guard owned baseline; policy v1\" UserOrGroupSid=\"S-1-1-0\" Action=\"Allow\"><Conditions><FilePathCondition Path=\"*\" /></Conditions></FilePathRule></RuleCollection>"
+                + "</AppLockerPolicy>";
 
             string xml = new AppLockerPolicyXmlWriter().Write(Compile());
 
             Assert.AreEqual(expected, xml);
             XDocument document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
             Assert.AreEqual("1", document.Root?.Attribute("Version")?.Value);
-            XElement collection = document.Root!.Elements("RuleCollection").Single();
-            Assert.AreEqual("Exe", collection.Attribute("Type")?.Value);
+            XElement collection = document.Root!.Elements("RuleCollection").Single(element => element.Attribute("Type")?.Value == "Exe");
             Assert.AreEqual("Enabled", collection.Attribute("EnforcementMode")?.Value);
             Assert.HasCount(2, collection.Elements().ToArray());
             Assert.HasCount(2, collection.Elements().Select(rule => rule.Attribute("Id")!.Value).Distinct(StringComparer.Ordinal).ToArray());
-            Assert.IsFalse(document.Descendants().Any(element => element.Name.LocalName.Contains("Appx", StringComparison.OrdinalIgnoreCase) || element.Name.LocalName.Contains("Hash", StringComparison.OrdinalIgnoreCase)));
+            Assert.IsFalse(document.Descendants().Any(element => element.Name.LocalName.Contains("Hash", StringComparison.OrdinalIgnoreCase)));
         }
 
         [TestMethod]
-        public void Write_AuditOnlyPreview_UsesExplicitAuditMode()
+        public void Write_AuditOnlyPreview_UsesExplicitAuditModeForBothCollections()
         {
             PolicyDefinition policy = Policy() with { AuditOnly = true };
 
             XDocument document = XDocument.Parse(new AppLockerPolicyXmlWriter().Write(Compile(policy: policy, mode: AppLockerEnforcementMode.AuditOnly)));
 
-            Assert.AreEqual("AuditOnly", document.Root!.Element("RuleCollection")!.Attribute("EnforcementMode")!.Value);
+            string[] modes = [.. document.Root!.Elements("RuleCollection").Select(collection => collection.Attribute("EnforcementMode")!.Value)];
+            Assert.HasCount(2, modes);
+            Assert.IsTrue(modes.All(mode => mode == "AuditOnly"), string.Join(", ", modes));
+        }
+
+        [TestMethod]
+        public void Write_AlwaysAllowsSignedPackagedApps_BecauseEnforcedExeRulesOtherwiseBlockThemAll()
+        {
+            // AppLocker event 8027: no packaged app runs while EXE rules are enforced and no packaged-app rule exists.
+            XDocument document = XDocument.Parse(new AppLockerPolicyXmlWriter().Write(Compile()));
+
+            XElement packaged = document.Root!.Elements("RuleCollection").Single(element => element.Attribute("Type")?.Value == "Appx");
+            XElement rule = packaged.Elements().Single();
+            XElement condition = rule.Descendants("FilePublisherCondition").Single();
+            Assert.AreEqual("Allow", rule.Attribute("Action")?.Value);
+            Assert.AreEqual("S-1-1-0", rule.Attribute("UserOrGroupSid")?.Value);
+            Assert.AreEqual("*", condition.Attribute("PublisherName")?.Value);
+            Assert.AreEqual("*", condition.Attribute("ProductName")?.Value);
+            Assert.AreEqual("*", condition.Attribute("BinaryName")?.Value);
+            Assert.AreEqual("*", condition.Element("BinaryVersionRange")?.Attribute("HighSection")?.Value);
         }
 
         [TestMethod]
@@ -50,7 +72,7 @@ namespace Guard.Service.Tests.AppLocker
                 new Version(1, 2, 3, 4), new Version(5, 6, 7, 8));
 
             string xml = new AppLockerPolicyXmlWriter().Write(Compile(identity: identity));
-            XElement condition = XDocument.Parse(xml).Descendants("FilePublisherCondition").Single();
+            XElement condition = XDocument.Parse(xml).Descendants("FilePublisherCondition").Single(element => (string?)element.Attribute("BinaryName") != "*");
 
             StringAssert.Contains(xml, "&amp;");
             StringAssert.Contains(xml, "&lt;");

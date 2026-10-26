@@ -124,6 +124,14 @@ namespace Guard.Windows
                 [pscustomobject]@{ terminated = $true; reason = 'stopped' }
             }
 
+            function Get-GuardLocalUsers {
+                $found = New-Object System.Collections.ArrayList
+                foreach ($user in Get-CimInstance -ClassName Win32_UserAccount -Filter 'LocalAccount=True AND Disabled=False') {
+                    [void]$found.Add([pscustomobject]@{ name = [string]$user.Name; sid = [string]$user.SID; fullName = [string]$user.FullName })
+                }
+                [object[]]$found.ToArray()
+            }
+
             [Console]::Out.WriteLine('{"ready":true}')
             [Console]::Out.Flush()
             while ($true) {
@@ -140,6 +148,7 @@ namespace Guard.Windows
                         'identify' { $result = Get-GuardIdentity ([string]$arguments.path) }
                         'processes' { $result = [object[]]@(Find-GuardProcesses $arguments.binaries $arguments.ownerSids) }
                         'terminate' { $result = Stop-GuardProcess ([int]$arguments.pid) ([string]$arguments.startUtc) }
+                        'users' { $result = [object[]]@(Get-GuardLocalUsers) }
                         default { throw "Unknown operation '$($request.op)'." }
                     }
                     $response = @{ id = $id; ok = $true; result = $result }

@@ -28,7 +28,7 @@ namespace Guard.Windows
             string path = Required(root, "path");
             string? publisher = Optional(root, "publisher");
             return string.IsNullOrEmpty(publisher)
-                ? throw new InvalidOperationException($"'{path}' is not signed; only publisher identities are supported.")
+                ? throw new InvalidOperationException($"'{path}'은(는) 회사 서명이 없는 파일이라 등록할 수 없습니다. 게임 회사가 서명한 실행 파일을 골라 주세요.")
                 : new NativeFileIdentity(path, publisher, Required(root, "product"), Required(root, "binary"), Required(root, "version"), Required(root, "sha256"));
         }
 
@@ -52,6 +52,19 @@ namespace Guard.Windows
                 Optional(item, "product"),
                 Optional(item, "binary"),
                 Optional(item, "version")))];
+        }
+
+        internal static IReadOnlyList<LocalAccount> ParseLocalAccounts(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            IEnumerable<JsonElement> items = root.ValueKind switch
+            {
+                JsonValueKind.Array => root.EnumerateArray(),
+                JsonValueKind.Object => [root],
+                _ => [],
+            };
+            return [.. items.Select(item => new LocalAccount(Required(item, "name"), Required(item, "sid"), Optional(item, "fullName") is { Length: > 0 } full ? full : null))];
         }
 
         internal static bool ParseTerminated(string json)

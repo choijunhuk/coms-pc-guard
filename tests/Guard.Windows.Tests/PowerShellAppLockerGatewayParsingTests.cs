@@ -48,7 +48,22 @@ namespace Guard.Windows.Tests
             const string json = /*lang=json,strict*/ """{"path":"C:\\Games\\tool.exe","publisher":null,"product":null,"binary":null,"version":null,"sha256":"abcd"}""";
 
             InvalidOperationException exception = Assert.ThrowsExactly<InvalidOperationException>(() => NativeResponseParser.ParseIdentity(json));
-            StringAssert.Contains(exception.Message, "not signed");
+            StringAssert.Contains(exception.Message, "서명이 없는");
+        }
+
+        [TestMethod]
+        public void ParseLocalAccounts_AcceptsListsAndTheSingleItemShape()
+        {
+            const string many = /*lang=json,strict*/ """[{"name":"club1","sid":"S-1-5-21-1-2-3-1001","fullName":"Kim"},{"name":"club2","sid":"S-1-5-21-1-2-3-1002","fullName":""}]""";
+            const string one = /*lang=json,strict*/ """{"name":"club1","sid":"S-1-5-21-1-2-3-1001","fullName":null}""";
+
+            IReadOnlyList<LocalAccount> accounts = NativeResponseParser.ParseLocalAccounts(many);
+            IReadOnlyList<LocalAccount> single = NativeResponseParser.ParseLocalAccounts(one);
+
+            Assert.HasCount(2, accounts);
+            Assert.AreEqual("Kim", accounts[0].FullName);
+            Assert.IsNull(accounts[1].FullName);
+            Assert.AreEqual("S-1-5-21-1-2-3-1001", single.Single().Sid);
         }
 #pragma warning restore CA1707
     }

@@ -57,6 +57,12 @@ namespace Guard.Windows
             return NativeResponseParser.ParseTerminated(json);
         }
 
+        /// <summary>Enabled local accounts, for picking members without typing account names.</summary>
+        public async Task<IReadOnlyList<LocalAccount>> ListLocalAccountsAsync(CancellationToken cancellationToken)
+        {
+            return NativeResponseParser.ParseLocalAccounts(await _session.InvokeAsync("users", new Dictionary<string, object?>(), cancellationToken).ConfigureAwait(false));
+        }
+
         public Task NotifySessionAsync(int sessionId, string title, string message, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(title);

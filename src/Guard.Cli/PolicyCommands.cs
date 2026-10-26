@@ -1,38 +1,14 @@
 using System.Globalization;
-using System.Security.Principal;
 using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
+using Guard.Windows;
 
 namespace Guard.Cli
 {
     /// <summary>How the CLI learns about accounts; replaced in tests.</summary>
     internal sealed record GuardCliEnvironment(Func<string, (string Name, string Sid)> ResolveAccount, Func<string?> CurrentUserSid)
     {
-        internal static GuardCliEnvironment Default { get; } = new(ResolveWindowsAccount, CurrentWindowsSid);
-
-        private static (string Name, string Sid) ResolveWindowsAccount(string account)
-        {
-            if (!OperatingSystem.IsWindows())
-            {
-                throw new PlatformNotSupportedException("계정 확인은 Windows에서만 할 수 있습니다.");
-            }
-
-            try
-            {
-                SecurityIdentifier sid = (SecurityIdentifier)new NTAccount(account).Translate(typeof(SecurityIdentifier));
-                string full = ((NTAccount)sid.Translate(typeof(NTAccount))).Value;
-                return (full[(full.LastIndexOf('\\') + 1)..], sid.Value);
-            }
-            catch (IdentityNotMappedException exception)
-            {
-                throw new GuardConfigurationException($"'{account}' 계정을 이 PC에서 찾을 수 없습니다.", exception);
-            }
-        }
-
-        private static string? CurrentWindowsSid()
-        {
-            return OperatingSystem.IsWindows() ? WindowsIdentity.GetCurrent().User?.Value : null;
-        }
+        internal static GuardCliEnvironment Default { get; } = new(WindowsAccounts.Resolve, WindowsAccounts.CurrentUserSid);
     }
 
     /// <summary>Owner commands that edit the policy file. The running service picks each change up within seconds.</summary>

@@ -3,6 +3,7 @@ using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
 using Guard.Service.Enforcement;
 using Guard.Service.Reconciliation;
+using Guard.Service.Status;
 using Guard.Service.Storage;
 using Guard.Windows;
 
@@ -14,6 +15,9 @@ namespace Guard.Host
         public string PolicyPath => Path.Combine(DataDirectory, "policy.json");
 
         public string StatePath => Path.Combine(DataDirectory, "state.db");
+
+        /// <summary>Readable by every user (installer ACL) so the notifier can show members their state.</summary>
+        public string StatusPath => Path.Combine(DataDirectory, "status", "status.json");
     }
 
     /// <summary>
@@ -92,6 +96,7 @@ namespace Guard.Host
             try
             {
                 GuardApplyResult result = await service.ApplyAsync(configuration, cancellationToken).ConfigureAwait(false);
+                PublishStatus(configuration, result);
                 long? revision = result.Artifact?.PolicyVersion;
                 switch (result.Status)
                 {
@@ -157,6 +162,21 @@ namespace Guard.Host
                 return EnforcementSchedule.RetryInterval;
             }
         }
+
+        private void PublishStatus(GuardConfiguration configuration, GuardApplyResult result)
+        {
+            try
+            {
+                GuardStatusFile.Write(options.StatusPath, GuardStatusFile.Build(configuration, result, clock.GetUtcNow()));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                LogStatusUnwritable(exception.Message);
+            }
+        }
+
+        [LoggerMessage(EventId = 1012, Level = LogLevel.Warning, Message = "Status file could not be written: {Reason}")]
+        private partial void LogStatusUnwritable(string reason);
 
         [LoggerMessage(EventId = 1000, Level = LogLevel.Information, Message = "COMS PC Guard started; data directory {DataDirectory}")]
         private partial void LogStarted(string dataDirectory);

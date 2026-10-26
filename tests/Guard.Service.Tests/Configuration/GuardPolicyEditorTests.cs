@@ -8,7 +8,7 @@ namespace Guard.Service.Tests.Configuration
     {
         private const string Owner = "S-1-5-21-1-2-3-1000";
         private static readonly TimeZoneInfo Korea = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time");
-        private static readonly string[] expected = new[] { "LAUNCHER.EXE", "CLIENT.EXE" };
+        private static readonly string[] expected = ["LAUNCHER.EXE", "CLIENT.EXE"];
 
 #pragma warning disable CA1707
         [TestMethod]

@@ -32,6 +32,34 @@ namespace Guard.Windows
                 : new NativeFileIdentity(path, publisher, Required(root, "product"), Required(root, "binary"), Required(root, "version"), Required(root, "sha256"));
         }
 
+        internal static IReadOnlyList<RunningProcess> ParseProcesses(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            IEnumerable<JsonElement> items = root.ValueKind switch
+            {
+                JsonValueKind.Array => root.EnumerateArray(),
+                JsonValueKind.Object => [root],
+                _ => [],
+            };
+            return [.. items.Select(item => new RunningProcess(
+                item.GetProperty("pid").GetInt32(),
+                DateTimeOffset.Parse(Required(item, "startUtc"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUniversalTime(),
+                Required(item, "path"),
+                Required(item, "ownerSid"),
+                item.GetProperty("sessionId").GetInt32(),
+                Optional(item, "publisher"),
+                Optional(item, "product"),
+                Optional(item, "binary"),
+                Optional(item, "version")))];
+        }
+
+        internal static bool ParseTerminated(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty("terminated", out JsonElement value) && value.ValueKind == JsonValueKind.True;
+        }
+
         private static string Required(JsonElement root, string name)
         {
             return Optional(root, name) is { Length: > 0 } value ? value : throw new FormatException($"Native response is missing '{name}'.");

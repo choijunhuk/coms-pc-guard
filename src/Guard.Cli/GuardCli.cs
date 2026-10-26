@@ -23,12 +23,13 @@ namespace Guard.Cli
 
         private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-        internal static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error, TimeProvider time, Func<IAppLockerNativeGateway>? gatewayFactory = null)
+        internal static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error, TimeProvider time, Func<IAppLockerNativeGateway>? gatewayFactory = null, GuardCliEnvironment? environment = null)
         {
             ArgumentNullException.ThrowIfNull(args);
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(error);
             ArgumentNullException.ThrowIfNull(time);
+            GuardCliEnvironment accounts = environment ?? GuardCliEnvironment.Default;
             if (args.Count == 0 || args[0] is "help" or "-h" or "--help")
             {
                 WriteUsage(output);
@@ -36,14 +37,26 @@ namespace Guard.Cli
             }
 
             string[] rest = [.. args.Skip(1)];
+            bool appAdd = args[0] == "app" && rest.Length > 0 && rest[0] == "add";
             return args[0] switch
             {
                 "preview" => Preview(rest, output, error, time),
-                "apply" or "status" or "identify" or "clear" when gatewayFactory is null => Fail(error, "이 명령은 Windows에서만 동작합니다.", UsageError),
-                "apply" => Native(() => ApplyAsync(rest, output, error, time, gatewayFactory), error),
-                "status" => Native(() => StatusAsync(rest, output, error, time, gatewayFactory), error),
-                "identify" => Native(() => IdentifyAsync(rest, output, error, gatewayFactory), error),
-                "clear" => Native(() => ClearAsync(rest, output, error, gatewayFactory), error),
+                "init" => Init(rest, output, error, accounts),
+                "member" => Member(rest, output, error, accounts),
+                "grant" => Grant(rest, output, error, time, accounts),
+                "revoke" => Revoke(rest, output, error, time, accounts),
+                "emergency" => Emergency(rest, output, error, accounts),
+                "mode" => Mode(rest, output, error, accounts),
+                "schedule" => Schedule(rest, output, error, accounts),
+                "holiday" => Holiday(rest, output, error, accounts),
+                "policy" => PolicyShow(rest, output, error, time),
+                "app" when !appAdd => App(rest, output, error, accounts),
+                "apply" or "status" or "identify" or "clear" or "app" when gatewayFactory is null => Fail(error, "이 명령은 Windows에서만 동작합니다.", UsageError),
+                "app" => Native(gatewayFactory, gateway => AppAddAsync([.. rest.Skip(1)], output, error, accounts, gateway), error),
+                "apply" => Native(gatewayFactory, gateway => ApplyAsync(rest, output, error, time, gateway), error),
+                "status" => Native(gatewayFactory, gateway => StatusAsync(rest, output, error, time, gateway), error),
+                "identify" => Native(gatewayFactory, gateway => IdentifyAsync(rest, output, error, gateway), error),
+                "clear" => Native(gatewayFactory, gateway => ClearAsync(rest, output, error, gateway), error),
                 _ => Fail(error, $"알 수 없는 명령입니다: {args[0]}", UsageError),
             };
         }
@@ -171,18 +184,37 @@ namespace Guard.Cli
 
         private static void WriteUsage(TextWriter output)
         {
-            output.WriteLine("사용법:");
-            output.WriteLine("  guard preview --policy <정책.json> --assume-clean-inventory [--now <ISO 8601>] [--xml-out <파일>]");
-            output.WriteLine("    정책 파일로 멤버·앱별 결정과 AppLocker XML을 미리 계산합니다. Windows 정책은 바꾸지 않습니다.");
-            output.WriteLine("  guard apply [--policy <정책.json>] [--state <state.db>]   (관리자)");
-            output.WriteLine("    지금 시각의 결정을 계산해 Windows와 다를 때만 적용하고, 실제 정책을 다시 읽어 확인합니다.");
-            output.WriteLine("  guard status [--policy <정책.json>] [--state <state.db>]");
-            output.WriteLine("    현재 AppLocker 상태, 적용된 리비전, 지금의 결정을 보여 줍니다. 아무것도 바꾸지 않습니다.");
-            output.WriteLine("  guard identify <실행 파일>");
-            output.WriteLine("    파일 서명에서 정책 파일에 넣을 게시자 식별 정보를 읽습니다.");
-            output.WriteLine("  guard clear   (관리자)");
-            output.WriteLine("    로컬 정책이 COMS PC Guard가 만든 것일 때만 지웁니다. 외부 정책은 건드리지 않습니다.");
-            output.WriteLine($"  기본 경로: {Path.Combine(DefaultDataDirectory, "policy.json")}, {Path.Combine(DefaultDataDirectory, "state.db")}");
+            string[] lines =
+            [
+                "COMS PC Guard 관리 명령 (설정을 바꾸는 명령은 '관리자 권한으로 실행'한 터미널에서)",
+                "",
+                "처음 설정",
+                "  guard init                                  새 정책 파일 만들기 (매일 09~18시, 시험 운영 모드)",
+                "  guard member add <계정>                     부원 등록        (remove <이름>, list)",
+                "  guard app add <게임 실행 파일> [--id 이름]  게임 등록        (remove <이름>, list)",
+                "",
+                "평소 운영",
+                "  guard grant <부원|all> <게임|all> <90|2h|today>   잠깐 허용",
+                "  guard revoke <허용 번호|all>                       허용 취소",
+                "  guard emergency on|off                             긴급 제한 켜기/끄기",
+                "  guard mode audit|enforce                           시험 운영(기록만) / 실제 차단",
+                "  guard schedule set <요일> <시작> <끝>              시간표 (예: 평일 09:00 18:00, allday 주말, clear)",
+                "  guard holiday add <날짜> [09:00-12:00 ...]         휴일·예외 날짜 (remove <날짜>)",
+                "  guard policy                                       지금 설정 보기",
+                "",
+                "상태와 점검",
+                "  guard status            Windows에 적용된 상태와 지금의 결정 보기 (아무것도 안 바꿈)",
+                "  guard apply             지금 바로 한 번 적용 (서비스가 평소에 자동으로 함)",
+                "  guard identify <파일>   게임 파일의 서명 정보 보기",
+                "  guard clear             COMS PC Guard가 만든 차단을 모두 풀고 지우기",
+                "  guard preview --policy <파일> --assume-clean-inventory   정책 파일 미리 계산(이 PC를 바꾸지 않음)",
+                "",
+                $"정책 파일 위치: {Path.Combine(DefaultDataDirectory, "policy.json")}  (다른 파일은 --policy <경로>)",
+            ];
+            foreach (string line in lines)
+            {
+                output.WriteLine(line);
+            }
         }
     }
 }

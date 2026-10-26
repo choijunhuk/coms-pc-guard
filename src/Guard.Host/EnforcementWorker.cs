@@ -1,5 +1,4 @@
 using System.Runtime.Versioning;
-using System.Text;
 using Guard.Service.AppLocker;
 using Guard.Service.Configuration;
 using Guard.Service.Reconciliation;
@@ -29,7 +28,8 @@ namespace Guard.Host
             SqlitePolicyStateStore store = new(new(new(options.StatePath)));
             await store.InitializeAsync(stoppingToken).ConfigureAwait(false);
             using PolicyOperationGate gate = new();
-            GuardApplyService service = new(new PowerShellAppLockerGateway(), store, clock, gate);
+            using PowerShellAppLockerGateway gateway = new();
+            GuardApplyService service = new(gateway, store, clock, gate);
 
             using SemaphoreSlim wake = new(0);
             using FileSystemWatcher watcher = new(options.DataDirectory, Path.GetFileName(options.PolicyPath))
@@ -73,7 +73,13 @@ namespace Guard.Host
             GuardConfiguration configuration;
             try
             {
-                configuration = GuardPolicyDocumentReader.Parse(await File.ReadAllTextAsync(options.PolicyPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false));
+                GuardPolicyLoad load = GuardPolicyStore.Load(options.PolicyPath);
+                if (load.FromBackup)
+                {
+                    LogPolicyFromBackup(options.PolicyPath, load.CurrentFileError);
+                }
+
+                configuration = load.Configuration;
             }
             catch (Exception exception) when (exception is GuardConfigurationException or IOException or UnauthorizedAccessException)
             {
@@ -146,5 +152,8 @@ namespace Guard.Host
 
         [LoggerMessage(EventId = 1007, Level = LogLevel.Information, Message = "Policy file changed; running an enforcement pass")]
         private partial void LogPolicyFileChanged();
+
+        [LoggerMessage(EventId = 1008, Level = LogLevel.Warning, Message = "Policy file {Path} is unreadable ({Reason}); using the previous version (.bak)")]
+        private partial void LogPolicyFromBackup(string path, string? reason);
     }
 }

@@ -1,105 +1,90 @@
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using Guard.Service.AppLocker;
 
 namespace Guard.Windows
 {
-    /// <summary>Native AppLocker access through the built-in AppLocker PowerShell module. Requires an elevated or SYSTEM caller to apply.</summary>
+    /// <summary>
+    /// Native AppLocker and process access through one long-lived Windows PowerShell host (see <see cref="PowerShellHostScript"/>).
+    /// Applying policy or stopping processes requires an elevated or SYSTEM caller.
+    /// </summary>
     [SupportedOSPlatform("windows")]
-    public sealed class PowerShellAppLockerGateway : IAppLockerNativeGateway
+    public sealed partial class PowerShellAppLockerGateway : IAppLockerNativeGateway, INativeProcessGateway, IDisposable
     {
-        private const string Prelude = """
-            $ErrorActionPreference = 'Stop'
-            $ProgressPreference = 'SilentlyContinue'
-            Import-Module AppLocker
-            function ConvertTo-AsciiJson($Value) {
-                $json = $Value | ConvertTo-Json -Depth 5 -Compress
-                [regex]::Replace($json, '[^\x00-\x7F]', { param($match) '\u{0:x4}' -f [int][char]$match.Value })
-            }
-
-            """;
-
-        internal const string ReadStateScript = Prelude + """
-            $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='AppIDSvc'"
-            $local = [string](Get-AppLockerPolicy -Local -Xml)
-            $effective = [string](Get-AppLockerPolicy -Effective -Xml)
-            $mdmKeys = @(
-                'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\AppLocker',
-                'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\ApplicationLaunchRestrictions'
-            ) | Where-Object { Test-Path -LiteralPath $_ }
-            $ciTool = Join-Path $env:SystemRoot 'System32\CiTool.exe'
-            $custom = @('CiTool unavailable')
-            if (Test-Path -LiteralPath $ciTool) {
-                $listed = (& $ciTool -lp -json | Out-String) | ConvertFrom-Json
-                $custom = @($listed.Policies | Where-Object { $_.IsEnforced -and -not $_.IsSystemPolicy } | ForEach-Object { [string]$_.FriendlyName })
-            }
-            ConvertTo-AsciiJson ([pscustomobject]@{
-                capturedUtc = [DateTimeOffset]::UtcNow.ToString('O')
-                localPolicyXml = $local
-                effectivePolicyXml = $effective
-                appIdStartMode = [string]$service.StartMode
-                appIdState = [string]$service.State
-                mdmPresent = (@($mdmKeys).Count -gt 0)
-                customCiPolicies = @($custom)
-            })
-            """;
-
-        internal const string ApplyScript = Prelude + """
-            $xml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()))
-            $document = New-Object System.Xml.XmlDocument
-            $document.XmlResolver = $null
-            $document.LoadXml($xml)
-            if ($document.DocumentElement.Name -ne 'AppLockerPolicy') { throw 'The input is not an AppLocker policy.' }
-            # The caller's private temp directory (SYSTEM's for the service); CreateNew refuses a pre-planted file.
-            $file = Join-Path ([IO.Path]::GetTempPath()) ('coms-guard-' + [Guid]::NewGuid().ToString('N') + '.xml')
-            $stream = [IO.File]::Open($file, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
-            try {
-                $bytes = [Text.Encoding]::UTF8.GetBytes($xml)
-                $stream.Write($bytes, 0, $bytes.Length)
-            }
-            finally {
-                $stream.Dispose()
-            }
-            try {
-                Set-AppLockerPolicy -XmlPolicy $file
-            }
-            finally {
-                Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
-            }
-            ConvertTo-AsciiJson ([pscustomobject]@{ appliedUtc = [DateTimeOffset]::UtcNow.ToString('O') })
-            """;
-
-        internal const string IdentifyScript = Prelude + """
-            $path = $env:COMS_GUARD_FILE
-            $info = Get-AppLockerFileInformation -Path $path
-            $publisher = $info.Publisher
-            ConvertTo-AsciiJson ([pscustomobject]@{
-                path = [string]$info.Path
-                publisher = $(if ($publisher) { [string]$publisher.PublisherName } else { $null })
-                product = $(if ($publisher) { [string]$publisher.ProductName } else { $null })
-                binary = $(if ($publisher) { [string]$publisher.BinaryName } else { $null })
-                version = $(if ($publisher) { [string]$publisher.BinaryVersion } else { $null })
-                sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-            })
-            """;
-
+        private readonly PowerShellSession _session = new();
 
         public async Task<NativeAppLockerState> ReadStateAsync(CancellationToken cancellationToken)
         {
-            return NativeResponseParser.ParseState(await WindowsPowerShellRunner.RunAsync(ReadStateScript, null, null, cancellationToken).ConfigureAwait(false));
+            return NativeResponseParser.ParseState(await _session.InvokeAsync("read", new Dictionary<string, object?>(), cancellationToken).ConfigureAwait(false));
         }
 
         public async Task ApplyLocalPolicyAsync(string policyXml, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(policyXml);
-            _ = await WindowsPowerShellRunner.RunAsync(ApplyScript, null, Convert.ToBase64String(Encoding.UTF8.GetBytes(policyXml)), cancellationToken).ConfigureAwait(false);
+            _ = await _session.InvokeAsync("apply", new Dictionary<string, object?> { ["xmlBase64"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(policyXml)) }, cancellationToken).ConfigureAwait(false);
         }
 
         public async Task<NativeFileIdentity> ReadFileIdentityAsync(string path, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
-            string fullPath = Path.GetFullPath(path);
-            return NativeResponseParser.ParseIdentity(await WindowsPowerShellRunner.RunAsync(IdentifyScript, new Dictionary<string, string> { ["COMS_GUARD_FILE"] = fullPath }, null, cancellationToken).ConfigureAwait(false));
+            return NativeResponseParser.ParseIdentity(await _session.InvokeAsync("identify", new Dictionary<string, object?> { ["path"] = Path.GetFullPath(path) }, cancellationToken).ConfigureAwait(false));
         }
+
+        public async Task<IReadOnlyList<RunningProcess>> FindProcessesAsync(IReadOnlyCollection<string> binaryNames, IReadOnlyCollection<string> ownerSids, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(binaryNames);
+            ArgumentNullException.ThrowIfNull(ownerSids);
+            if (binaryNames.Count == 0 || ownerSids.Count == 0)
+            {
+                return [];
+            }
+
+            string json = await _session.InvokeAsync(
+                "processes",
+                new Dictionary<string, object?> { ["binaries"] = binaryNames.ToArray(), ["ownerSids"] = ownerSids.ToArray() },
+                cancellationToken).ConfigureAwait(false);
+            return NativeResponseParser.ParseProcesses(json);
+        }
+
+        public async Task<bool> TerminateAsync(int processId, DateTimeOffset startedAtUtc, CancellationToken cancellationToken)
+        {
+            string json = await _session.InvokeAsync(
+                "terminate",
+                new Dictionary<string, object?> { ["pid"] = processId, ["startUtc"] = startedAtUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture) },
+                cancellationToken).ConfigureAwait(false);
+            return NativeResponseParser.ParseTerminated(json);
+        }
+
+        public Task NotifySessionAsync(int sessionId, string title, string message, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(title);
+            ArgumentNullException.ThrowIfNull(message);
+            // WTSSendMessage shows a message box in another session (the service runs in session 0); bWait=false returns at once.
+            _ = WTSSendMessageW(IntPtr.Zero, sessionId, title, title.Length * 2, message, message.Length * 2, MessageBoxWarning, 60, out _, false);
+            return Task.CompletedTask;
+        }
+
+        public void Dispose()
+        {
+            _session.Dispose();
+        }
+
+        private const int MessageBoxWarning = 0x00000030;
+
+        [LibraryImport("wtsapi32.dll", StringMarshalling = StringMarshalling.Utf16)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool WTSSendMessageW(
+            IntPtr server,
+            int sessionId,
+            string title,
+            int titleLength,
+            string message,
+            int messageLength,
+            int style,
+            int timeoutSeconds,
+            out int response,
+            [MarshalAs(UnmanagedType.Bool)] bool wait);
     }
 }

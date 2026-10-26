@@ -22,19 +22,25 @@ namespace Guard.Cli
                 : throw new PlatformNotSupportedException("이 명령은 Windows에서만 동작합니다.");
         }
 
-        private static int Native(Func<Task<int>> command, TextWriter error)
+        private static int Native(Func<IAppLockerNativeGateway>? gatewayFactory, Func<IAppLockerNativeGateway, Task<int>> command, TextWriter error)
         {
+            IAppLockerNativeGateway? gateway = null;
             try
             {
-                return command().GetAwaiter().GetResult();
+                gateway = gatewayFactory!();
+                return command(gateway).GetAwaiter().GetResult();
             }
             catch (Exception exception) when (exception is InvalidOperationException or TimeoutException or FormatException or IOException or UnauthorizedAccessException or PlatformNotSupportedException)
             {
                 return Fail(error, $"Windows 작업 실패: {exception.Message}", NativeFailure);
             }
+            finally
+            {
+                (gateway as IDisposable)?.Dispose();
+            }
         }
 
-        private static async Task<int> ApplyAsync(string[] args, TextWriter output, TextWriter error, TimeProvider time, Func<IAppLockerNativeGateway> gatewayFactory)
+        private static async Task<int> ApplyAsync(string[] args, TextWriter output, TextWriter error, TimeProvider time, IAppLockerNativeGateway gateway)
         {
             if (!TryReadPathOptions(args, error, out string policyPath, out string statePath))
             {
@@ -50,7 +56,7 @@ namespace Guard.Cli
             SqlitePolicyStateStore store = new(new(new(statePath)));
             await store.InitializeAsync(CancellationToken.None).ConfigureAwait(false);
             using PolicyOperationGate gate = new();
-            GuardApplyResult result = await new GuardApplyService(gatewayFactory(), store, time, gate).ApplyAsync(configuration, CancellationToken.None).ConfigureAwait(false);
+            GuardApplyResult result = await new GuardApplyService(gateway, store, time, gate).ApplyAsync(configuration, CancellationToken.None).ConfigureAwait(false);
 
             if (result.Pipeline is { } pipeline)
             {
@@ -78,14 +84,14 @@ namespace Guard.Cli
             return code;
         }
 
-        private static async Task<int> StatusAsync(string[] args, TextWriter output, TextWriter error, TimeProvider time, Func<IAppLockerNativeGateway> gatewayFactory)
+        private static async Task<int> StatusAsync(string[] args, TextWriter output, TextWriter error, TimeProvider time, IAppLockerNativeGateway gateway)
         {
             if (!TryReadPathOptions(args, error, out string policyPath, out string statePath))
             {
                 return UsageError;
             }
 
-            NativeAppLockerState state = await gatewayFactory().ReadStateAsync(CancellationToken.None).ConfigureAwait(false);
+            NativeAppLockerState state = await gateway.ReadStateAsync(CancellationToken.None).ConfigureAwait(false);
             AppLockerInventoryReading reading = AppLockerInventoryReader.Read(state);
             output.WriteLine($"AppIDSvc: {state.AppIdServiceStartMode}/{state.AppIdServiceState}");
             output.WriteLine(reading.CurrentArtifact is { } current
@@ -113,14 +119,14 @@ namespace Guard.Cli
             return Success;
         }
 
-        private static async Task<int> IdentifyAsync(string[] args, TextWriter output, TextWriter error, Func<IAppLockerNativeGateway> gatewayFactory)
+        private static async Task<int> IdentifyAsync(string[] args, TextWriter output, TextWriter error, IAppLockerNativeGateway gateway)
         {
             if (args.Length != 1)
             {
                 return Fail(error, "사용법: guard identify <실행 파일 경로>", UsageError);
             }
 
-            NativeFileIdentity identity = await gatewayFactory().ReadFileIdentityAsync(args[0], CancellationToken.None).ConfigureAwait(false);
+            NativeFileIdentity identity = await gateway.ReadFileIdentityAsync(args[0], CancellationToken.None).ConfigureAwait(false);
             string organization = identity.Publisher.Split(',')[0].Replace("O=", string.Empty, StringComparison.OrdinalIgnoreCase).Split(' ')[0].ToLowerInvariant();
             Dictionary<string, string> entry = new()
             {
@@ -137,14 +143,14 @@ namespace Guard.Cli
             return Success;
         }
 
-        private static async Task<int> ClearAsync(string[] args, TextWriter output, TextWriter error, Func<IAppLockerNativeGateway> gatewayFactory)
+        private static async Task<int> ClearAsync(string[] args, TextWriter output, TextWriter error, IAppLockerNativeGateway gateway)
         {
             if (args.Length != 0)
             {
                 return Fail(error, "clear는 옵션을 받지 않습니다.", UsageError);
             }
 
-            IAppLockerNativeGateway gateway = gatewayFactory();
+
             AppLockerInventoryReading before = AppLockerInventoryReader.Read(await gateway.ReadStateAsync(CancellationToken.None).ConfigureAwait(false));
             if (before.Inventory.Local == AppLockerPolicyPresence.Absent)
             {

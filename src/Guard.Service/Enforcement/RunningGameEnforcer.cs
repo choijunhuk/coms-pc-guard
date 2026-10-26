@@ -97,8 +97,9 @@ namespace Guard.Service.Enforcement
 
         private static bool Matches(PublisherApplicationIdentity identity, RunningProcess process)
         {
-            return process.Publisher == identity.Publisher
-                && process.Product == identity.Product
+            // AppLocker matches publisher, product and file names without regard to case, so this does too.
+            return string.Equals(process.Publisher, identity.Publisher, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(process.Product, identity.Product, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(process.Binary, identity.Binary, StringComparison.OrdinalIgnoreCase)
                 && Version.TryParse(process.BinaryVersion, out Version? version)
                 && version >= identity.MinimumVersion

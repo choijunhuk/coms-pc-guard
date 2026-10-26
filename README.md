@@ -31,4 +31,4 @@ Usable end to end in the lab VM (see `STATUS.md` and `docs/evidence/2026-10-26-o
 git diff --check
 ```
 
-The current matrix is 351/351 (Core 117, Service 218, Cli 10, Windows 6). Hosted CI proves portable behavior only; native behavior is evidenced in the lab VM.
+The current matrix is 355/355 (Core 117, Service 222, Cli 10, Windows 6). Hosted CI proves portable behavior only; native behavior is evidenced in the lab VM.

@@ -56,7 +56,7 @@ Each distinct compiled result gets its own durable revision (the Owner's `policy
 
 ## DR-011 — Owner tools: files with ACLs instead of IPC, one PowerShell host, activity record
 
-The Owner edits one policy file (`policy.json`); the command line and the Owner screen both re-read it, check that the current SID is `ownerSid`, edit through `GuardPolicyEditor`, and replace it atomically (temporary file flushed to disk, `File.Replace` keeping `.bak`). The service falls back to `.bak` when the file is unreadable. No IPC channel exists: the data folder is SYSTEM/Administrators only, so file ACLs are the trust boundary.
+The Owner edits one policy file (`policy.json`); the command line and the Owner screen both re-read it, check that the current SID is `ownerSid`, edit through `GuardPolicyEditor`, and replace it atomically (temporary file flushed to disk, `File.Replace` keeping `.bak`). The whole read-edit-write runs under an exclusive `policy.json.lock`, so two editors never both turn version N into N+1. The service falls back to `.bak` when the file is unreadable. No IPC channel exists: the data folder is SYSTEM/Administrators only, so file ACLs are the trust boundary.
 
 The service publishes `status\status.json` after every pass. The installer makes that one folder readable by Users, so the member notifier shows a member their own state without any write path back. The status carries the policy file version the service last applied, so the Owner screen can say when an edit has taken effect.
 

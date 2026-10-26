@@ -17,7 +17,7 @@
 | MSI | `BLOCKED` — WiX v7 EULA acceptance by the Owner pending (issue #3) |
 | Real hardware, Windows 11 Pro/Home, external GPO/MDM coexistence | `NOT_RUN` |
 
-The product is usable end to end: an Owner unzips the package, double-clicks `install.cmd`, registers members and games in the Owner screen, watches the audit-mode record, and switches to blocking. Members see their own state in a tray icon and get a 15-second warning before a running game is stopped. Local verification on the Windows host: locked restore, format, Release build, 351/351 tests in default and `TZ=UTC` runs (Core 117, Service 218, Cli 10, Windows 6).
+The product is usable end to end: an Owner unzips the package, double-clicks `install.cmd`, registers members and games in the Owner screen, watches the audit-mode record, and switches to blocking. Members see their own state in a tray icon and get a 15-second warning before a running game is stopped. Local verification on the Windows host: locked restore, format, Release build, 355/355 tests in default and `TZ=UTC` runs (Core 117, Service 222, Cli 10, Windows 6).
 
 Lab: VirtualBox VM `COMS-PC-Guard-x64-Lab` on the Windows host's `D:` drive (Windows 11 Enterprise Evaluation, about 47 days of license left). The physical host was only read; the Owner screen was rendered there non-elevated against a scratch folder.
 

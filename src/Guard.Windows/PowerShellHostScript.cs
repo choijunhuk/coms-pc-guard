@@ -134,7 +134,8 @@ namespace Guard.Windows
                 if ($AfterRecordId -ge 0 -and $latest -gt $AfterRecordId) {
                     $filter = "*[System[(EventID=8003 or EventID=8004) and EventRecordID > $AfterRecordId]]"
                     $events = @()
-                    try { $events = @(Get-WinEvent -LogName $log -FilterXPath $filter -MaxEvents 500 -ErrorAction Stop) } catch { }
+                    # Oldest first: the bookmark then advances through a backlog 500 at a time instead of skipping it.
+                    try { $events = @(Get-WinEvent -LogName $log -FilterXPath $filter -Oldest -MaxEvents 500 -ErrorAction Stop) } catch { }
                     foreach ($record in $events) {
                         $data = @{}
                         foreach ($node in ([xml]$record.ToXml()).Event.UserData.FirstChild.ChildNodes) { $data[$node.LocalName] = [string]$node.InnerText }

@@ -52,6 +52,21 @@ namespace Guard.Service.Tests.Status
         }
 
         [TestMethod]
+        public void Build_WithoutDecisions_ReportsUnknownNotAllowed()
+        {
+            GuardConfiguration configuration = GuardPolicyDocumentReader.Parse(Document());
+
+            GuardStatusSnapshot snapshot = GuardStatusFile.Build(configuration, new GuardApplyResult(GuardApplyStatus.RecoveryPending, null, null, null), AppLockerTestData.InsideWindow);
+            GuardAppStatus app = snapshot.Members[0].Apps.Single();
+            HashSet<string> warned = [];
+            IReadOnlyList<string> alerts = GuardStatusMessages.Alerts(Member(PolicyDecisionKind.Restricted, null), new GuardMemberStatus(MemberA, "MemberA", [app]), AppLockerTestData.InsideWindow, Korea, warned);
+
+            Assert.IsNull(app.Decision);
+            Assert.AreEqual("문자표: 지금 상태를 확인하는 중이에요", GuardStatusMessages.Describe(app, AppLockerTestData.InsideWindow, Korea));
+            Assert.IsEmpty(alerts);
+        }
+
+        [TestMethod]
         public void WriteThenTryRead_RoundTrips_AndBrokenFilesReadAsNull()
         {
             string directory = Path.Combine(Path.GetTempPath(), $"guard-status-{Guid.NewGuid():N}");

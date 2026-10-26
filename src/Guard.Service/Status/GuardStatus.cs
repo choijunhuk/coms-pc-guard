@@ -27,8 +27,11 @@ namespace Guard.Service.Status
 
     public sealed record GuardMemberStatus(string Sid, string Name, IReadOnlyList<GuardAppStatus> Apps);
 
-    /// <summary><see cref="UntilUtc"/> is when this app's state next changes for the member.</summary>
-    public sealed record GuardAppStatus(string AppId, string DisplayName, PolicyDecisionKind Decision, DateTimeOffset? UntilUtc);
+    /// <summary>
+    /// <see cref="UntilUtc"/> is when this app's state next changes for the member. A null <see cref="Decision"/> means the
+    /// service has no current decision (for example while it recovers an interrupted apply); earlier rules may still apply.
+    /// </summary>
+    public sealed record GuardAppStatus(string AppId, string DisplayName, PolicyDecisionKind? Decision, DateTimeOffset? UntilUtc);
 
     public static class GuardStatusFile
     {
@@ -64,7 +67,8 @@ namespace Guard.Service.Status
                         .. configuration.Applications.Select(app =>
                         {
                             PolicyDecision? decision = decisions.FirstOrDefault(candidate => candidate.MemberSid == member.Sid && candidate.AppId == app.AppId);
-                            return new GuardAppStatus(app.AppId, app.DisplayName, decision?.Decision ?? PolicyDecisionKind.Allowed, decision?.NextTransition);
+                            // No decision is reported as unknown, never as allowed: restrictions applied earlier can still be active.
+                            return new GuardAppStatus(app.AppId, app.DisplayName, decision?.Decision, decision?.NextTransition);
                         }),
                     ])),
             ];
@@ -119,6 +123,7 @@ namespace Guard.Service.Status
                 PolicyDecisionKind.Restricted => $"{app.DisplayName}: 지금은 제한 시간이에요{(until.Length > 0 ? $" ({until}까지)" : string.Empty)}",
                 PolicyDecisionKind.TemporaryAllow => $"{app.DisplayName}: 잠깐 허용 중이에요{(until.Length > 0 ? $" ({until}까지)" : string.Empty)}",
                 PolicyDecisionKind.AuditOnly => $"{app.DisplayName}: 제한 시간이지만 지금은 시험 운영이라 막지 않아요",
+                null => $"{app.DisplayName}: 지금 상태를 확인하는 중이에요",
                 _ => $"{app.DisplayName}: 사용할 수 있어요{(until.Length > 0 ? $" (다음 제한 {until})" : string.Empty)}",
             };
         }
@@ -132,7 +137,8 @@ namespace Guard.Service.Status
             foreach (GuardAppStatus app in current.Apps)
             {
                 GuardAppStatus? before = previous?.Apps.FirstOrDefault(candidate => candidate.AppId == app.AppId);
-                if (before is not null && before.Decision != app.Decision)
+                // Going into or out of "unknown" is not a change the member needs a pop-up for.
+                if (before?.Decision is not null && app.Decision is not null && before.Decision != app.Decision)
                 {
                     alerts.Add(Describe(app, nowUtc, zone));
                 }

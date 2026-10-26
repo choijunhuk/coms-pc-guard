@@ -119,6 +119,20 @@ namespace Guard.Service.Tests.Enforcement
         }
 
         [TestMethod]
+        public async Task Sweep_MatchesPublisherAndProductWithoutRegardToCase()
+        {
+            ManualTimeProvider clock = new(AppLockerTestData.InsideWindow);
+            FakeProcesses processes = new();
+            processes.Running.Add(Game(4600, MemberA, publisher: Publisher.ToLowerInvariant()) with { Product = Product.ToLowerInvariant() });
+            RunningGameEnforcer enforcer = new(processes, clock);
+            (GuardConfiguration configuration, IReadOnlyList<PolicyDecision> decisions) = Restricted();
+
+            RunningGameSweep sweep = await enforcer.SweepAsync(configuration, decisions, CancellationToken.None);
+
+            Assert.AreEqual(1, sweep.Warned.Count);
+        }
+
+        [TestMethod]
         public async Task Sweep_ReusedPid_IsNotReportedAsStopped()
         {
             ManualTimeProvider clock = new(AppLockerTestData.InsideWindow);

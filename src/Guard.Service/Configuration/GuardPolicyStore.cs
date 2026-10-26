@@ -64,6 +64,64 @@ namespace Guard.Service.Configuration
             return configuration;
         }
 
+        public static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Exclusive lock for a read-edit-write of <paramref name="policyPath"/> (a "&lt;policy&gt;.lock" file opened without sharing),
+        /// so the Owner screen and the command line never both read version N and write N+1.
+        /// </summary>
+        public static IDisposable Lock(string policyPath, TimeSpan? timeout = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(policyPath);
+            string lockPath = Path.GetFullPath(policyPath) + ".lock";
+            DateTime deadline = DateTime.UtcNow + (timeout ?? DefaultLockTimeout);
+            while (true)
+            {
+                try
+                {
+                    return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    throw;
+                }
+                catch (IOException exception)
+                {
+                    if (DateTime.UtcNow >= deadline)
+                    {
+                        throw new GuardConfigurationException("다른 곳(관리 화면이나 명령어)에서 설정을 바꾸는 중이에요. 잠시 뒤 다시 해 주세요.", exception);
+                    }
+
+                    Thread.Sleep(50);
+                }
+            }
+        }
+
+        /// <summary>Reads, edits and saves the policy under <see cref="Lock"/>. Returns the saved document.</summary>
+        public static GuardPolicyDocument Update(string policyPath, Func<GuardPolicyDocument, GuardPolicyDocument> edit, TimeSpan? lockTimeout = null)
+        {
+            ArgumentNullException.ThrowIfNull(edit);
+            using IDisposable gate = Lock(policyPath, lockTimeout);
+            GuardPolicyDocument updated = edit(ReadDocument(policyPath));
+            _ = Write(policyPath, updated);
+            return updated;
+        }
+
+        /// <summary>Saves a new policy under <see cref="Lock"/>; returns false, writing nothing, when one exists and <paramref name="overwrite"/> is false.</summary>
+        public static bool Create(string policyPath, GuardPolicyDocument document, bool overwrite)
+        {
+            ArgumentNullException.ThrowIfNull(document);
+            _ = Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(policyPath))!);
+            using IDisposable gate = Lock(policyPath);
+            if (File.Exists(policyPath) && !overwrite)
+            {
+                return false;
+            }
+
+            _ = Write(policyPath, document);
+            return true;
+        }
+
         /// <summary>Loads the policy, falling back to the previous version when the current file is unreadable or invalid.</summary>
         public static GuardPolicyLoad Load(string policyPath)
         {

@@ -66,7 +66,7 @@ Read-only physical inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.
 ## 2026-10-26 Owner tools (`feat/owner-tools`)
 
 - Host: Windows 11 Home build 26200; SDK repository-local .NET 10.0.401. Locked restore, format verification, Release build (0 warnings), `git diff --check`: pass.
-- Full tests: 351/351 in default and `TZ=UTC` runs (Core 117, Service 218, Cli 10, Windows 6). New suites: policy editor and commands, running-game enforcer, status file and alerts, activity record (append/read/prune/CSV/formula neutralisation/launch-event mapping), `guard log`, PowerShell response parsing for accounts and events.
+- Full tests: 355/355 in default and `TZ=UTC` runs (Core 117, Service 222, Cli 10, Windows 6), including the review follow-ups (edit lock, separate IDs for same-named games, unknown state without decisions, case-insensitive running-game match). New suites: policy editor and commands, running-game enforcer, status file and alerts, activity record (append/read/prune/CSV/formula neutralisation/launch-event mapping), `guard log`, PowerShell response parsing for accounts and events.
 - Lab (details in `docs/evidence/2026-10-26-owner-tools.md`):
 
 | Scenario | Classification |

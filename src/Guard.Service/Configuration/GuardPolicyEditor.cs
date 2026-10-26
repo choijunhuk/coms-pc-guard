@@ -83,6 +83,23 @@ namespace Guard.Service.Configuration
             };
         }
 
+        /// <summary>
+        /// ID for a newly read file: its lowercase file name, unless another game already uses that ID with a different
+        /// publisher or product — two games both shipping "game.exe" must stay separate, so the second gets "game-2".
+        /// </summary>
+        public static string SuggestAppId(GuardPolicyDocument document, NativeFileIdentity identity)
+        {
+            ArgumentNullException.ThrowIfNull(document);
+            ArgumentNullException.ThrowIfNull(identity);
+            IReadOnlyList<GuardApplicationDocument> applications = document.Applications ?? [];
+            string candidate = Path.GetFileNameWithoutExtension(identity.Binary).ToLowerInvariant();
+            GuardApplicationDocument? sameId = applications.FirstOrDefault(app => app.AppId == candidate);
+            bool sameGame = sameId is not null && (sameId.PublisherIdentities ?? []).Any(existing =>
+                string.Equals(existing.Publisher, identity.Publisher, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(existing.Product, identity.Product, StringComparison.OrdinalIgnoreCase));
+            return sameId is null || sameGame ? candidate : UniqueId(candidate, applications.Select(app => app.AppId));
+        }
+
         public static GuardPolicyDocument RemoveApplication(GuardPolicyDocument document, string appId)
         {
             ArgumentNullException.ThrowIfNull(document);

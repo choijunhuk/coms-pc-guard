@@ -319,7 +319,11 @@ namespace Guard.Admin
         {
             try
             {
-                _document = GuardPolicyStore.ReadDocument(_policyPath);
+                GuardPolicyDocument document = GuardPolicyStore.ReadDocument(_policyPath);
+                // Reading only checks the JSON shape; validate too, so a bad time zone or schedule is reported here
+                // instead of failing later while drawing.
+                _ = GuardPolicyDocumentReader.ToConfiguration(document);
+                _document = document;
             }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
@@ -355,9 +359,15 @@ namespace Guard.Admin
             try
             {
                 GuardPolicyDocument created = GuardPolicyEditor.CreateDefault(_userSid);
-                _ = GuardPolicyStore.Write(_policyPath, created);
-                RecordChange(created.PolicyVersion, "새 정책을 만들었어요.");
-                Say("새 정책을 만들었어요. 기본값: 매일 09:00~18:00 제한, 시험 운영 모드.");
+                if (GuardPolicyStore.Create(_policyPath, created, overwrite: false))
+                {
+                    RecordChange(created.PolicyVersion, "새 정책을 만들었어요.");
+                    Say("새 정책을 만들었어요. 기본값: 매일 09:00~18:00 제한, 시험 운영 모드.");
+                }
+                else
+                {
+                    Say("그사이 다른 곳에서 정책을 만들었어요. 그 정책을 불러왔어요.");
+                }
             }
             catch (Exception exception) when (exception is GuardConfigurationException or IOException or UnauthorizedAccessException)
             {
@@ -524,14 +534,10 @@ namespace Guard.Admin
         {
             try
             {
-                GuardPolicyDocument current = GuardPolicyStore.ReadDocument(_policyPath);
-                if (current.OwnerSid != _userSid)
-                {
-                    throw new GuardConfigurationException("정책은 등록된 관리자(Owner) 계정만 바꿀 수 있어요.");
-                }
-
-                GuardPolicyDocument updated = edit(current);
-                _ = GuardPolicyStore.Write(_policyPath, updated);
+                GuardPolicyDocument updated = GuardPolicyStore.Update(_policyPath, current =>
+                    current.OwnerSid != _userSid
+                        ? throw new GuardConfigurationException("정책은 등록된 관리자(Owner) 계정만 바꿀 수 있어요.")
+                        : edit(current));
                 RecordChange(updated.PolicyVersion, done);
                 Say($"{done} 설정 {updated.PolicyVersion}번으로 저장했어요. 서비스가 몇 초 안에 반영해요.");
             }
@@ -648,10 +654,9 @@ namespace Guard.Admin
                 UseWaitCursor = false;
             }
 
-            string appId = Path.GetFileNameWithoutExtension(identity.Binary).ToLowerInvariant();
             string displayName = _appName.Text.Trim() is { Length: > 0 } typed ? typed : FriendlyName(identity, dialog.FileName);
             Apply(
-                document => GuardPolicyEditor.AddApplication(document, appId, displayName, identity),
+                document => GuardPolicyEditor.AddApplication(document, GuardPolicyEditor.SuggestAppId(document, identity), displayName, identity),
                 $"게임 '{displayName}'을(를) 등록했어요 ({identity.Binary}). 모든 버전이 대상이에요.");
             _appName.Text = string.Empty;
         }

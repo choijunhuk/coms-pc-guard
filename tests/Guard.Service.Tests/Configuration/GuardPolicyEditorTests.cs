@@ -9,6 +9,7 @@ namespace Guard.Service.Tests.Configuration
         private const string Owner = "S-1-5-21-1-2-3-1000";
         private static readonly TimeZoneInfo Korea = TimeZoneInfo.FindSystemTimeZoneById("Korea Standard Time");
         private static readonly string[] expected = ["LAUNCHER.EXE", "CLIENT.EXE"];
+        private static readonly string[] SeparateGames = ["알파", "베타"];
 
 #pragma warning disable CA1707
         [TestMethod]
@@ -36,6 +37,60 @@ namespace Guard.Service.Tests.Configuration
             Assert.AreEqual("게임", app.DisplayName);
             _ = GuardPolicyDocumentReader.ToConfiguration(document);
             _ = Assert.ThrowsExactly<GuardConfigurationException>(() => GuardPolicyEditor.AddApplication(document, "game", null, client));
+        }
+
+        [TestMethod]
+        public void SuggestAppId_KeepsDifferentGamesWithTheSameFileNameApart()
+        {
+            GuardPolicyDocument document = GuardPolicyEditor.CreateDefault(Owner);
+            NativeFileIdentity first = new("C:\\A\\game.exe", "O=STUDIO A", "ALPHA", "GAME.EXE", "1.0.0.0", "aa");
+            NativeFileIdentity second = new("C:\\B\\game.exe", "O=STUDIO B", "BETA", "GAME.EXE", "1.0.0.0", "bb");
+            NativeFileIdentity firstAgain = new("C:\\A2\\game.exe", "o=studio a", "alpha", "GAME.EXE", "2.0.0.0", "cc");
+
+            Assert.AreEqual("game", GuardPolicyEditor.SuggestAppId(document, first));
+            document = GuardPolicyEditor.AddApplication(document, GuardPolicyEditor.SuggestAppId(document, first), "알파", first);
+            string secondId = GuardPolicyEditor.SuggestAppId(document, second);
+            document = GuardPolicyEditor.AddApplication(document, secondId, "베타", second);
+
+            Assert.AreEqual("game-2", secondId);
+            CollectionAssert.AreEqual(SeparateGames, document.Applications!.Select(app => app.DisplayName).ToArray());
+            // The same game again keeps its ID, so adding it is reported as a duplicate instead of becoming a third game.
+            Assert.AreEqual("game", GuardPolicyEditor.SuggestAppId(document, firstAgain));
+        }
+
+        [TestMethod]
+        public async Task StoreUpdate_SerialisesConcurrentEdits()
+        {
+            string directory = Directory.CreateTempSubdirectory("guard-policy-lock-").FullName;
+            try
+            {
+                string path = Path.Combine(directory, "policy.json");
+                Assert.IsTrue(GuardPolicyStore.Create(path, GuardPolicyEditor.CreateDefault(Owner), overwrite: false));
+                Assert.IsFalse(GuardPolicyStore.Create(path, GuardPolicyEditor.CreateDefault(Owner), overwrite: false));
+
+                // Both edits sleep between read and write; without the lock both would write version 2.
+                Task[] edits =
+                [
+                    .. Enumerable.Range(0, 2).Select(_ => Task.Run(() => GuardPolicyStore.Update(path, document =>
+                    {
+                        Thread.Sleep(300);
+                        return GuardPolicyEditor.SetEmergency(document, !document.EmergencyRestriction);
+                    }))),
+                ];
+                await Task.WhenAll(edits);
+
+                Assert.AreEqual(3, GuardPolicyStore.ReadDocument(path).PolicyVersion);
+                using (GuardPolicyStore.Lock(path))
+                {
+                    GuardConfigurationException busy = Assert.ThrowsExactly<GuardConfigurationException>(() =>
+                        GuardPolicyStore.Update(path, document => document, TimeSpan.FromMilliseconds(200)));
+                    StringAssert.Contains(busy.Message, "바꾸는 중");
+                }
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
         }
 
         [TestMethod]

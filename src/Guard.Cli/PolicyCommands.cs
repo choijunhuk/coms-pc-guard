@@ -48,7 +48,11 @@ namespace Guard.Cli
                     ? environment.CurrentUserSid() ?? throw new GuardConfigurationException("현재 계정을 알 수 없습니다. --owner <계정>을 적어 주세요.")
                     : environment.ResolveAccount(owner).Sid;
                 GuardPolicyDocument document = GuardPolicyEditor.CreateDefault(ownerSid);
-                _ = GuardPolicyStore.Write(policyPath, document);
+                if (!GuardPolicyStore.Create(policyPath, document, overwrite: force))
+                {
+                    throw new GuardConfigurationException($"정책 파일이 이미 있습니다: {policyPath} (새로 만들려면 --force)");
+                }
+
                 RecordPolicyChange(policyPath, document.PolicyVersion, "새 정책을 만들었습니다");
                 output.WriteLine($"새 정책 파일을 만들었습니다: {policyPath}");
                 output.WriteLine("기본값: 매일 09:00~18:00 제한, '시험 운영(기록만)' 모드. 부원과 게임을 등록한 뒤 일주일 지켜보고 guard mode enforce로 바꾸세요.");
@@ -114,10 +118,12 @@ namespace Guard.Cli
             }
 
             NativeFileIdentity identity = await gateway.ReadFileIdentityAsync(path, CancellationToken.None).ConfigureAwait(false);
-            string appId = id ?? Path.GetFileNameWithoutExtension(identity.Binary).ToLowerInvariant();
             return Edit(policyPath, output, error, environment, document =>
-                (GuardPolicyEditor.AddApplication(document, appId, name, identity),
-                 $"게임 '{appId}'을(를) 등록했습니다: {identity.Binary} ({identity.Publisher.Split(',')[0]}). 모든 버전이 대상입니다."));
+            {
+                string appId = id ?? GuardPolicyEditor.SuggestAppId(document, identity);
+                return (GuardPolicyEditor.AddApplication(document, appId, name, identity),
+                        $"게임 '{appId}'을(를) 등록했습니다: {identity.Binary} ({identity.Publisher.Split(',')[0]}). 모든 버전이 대상입니다.");
+            });
         }
 
         private static int App(string[] args, TextWriter output, TextWriter error, GuardCliEnvironment environment)
@@ -261,15 +267,18 @@ namespace Guard.Cli
         {
             return Guarded(error, () =>
             {
-                GuardPolicyDocument document = GuardPolicyStore.ReadDocument(policyPath);
-                string? current = environment.CurrentUserSid();
-                if (current is not null && current != document.OwnerSid)
+                string message = string.Empty;
+                GuardPolicyDocument updated = GuardPolicyStore.Update(policyPath, document =>
                 {
-                    throw new GuardConfigurationException("정책은 등록된 관리자(Owner) 계정만 바꿀 수 있습니다.");
-                }
+                    string? current = environment.CurrentUserSid();
+                    if (current is not null && current != document.OwnerSid)
+                    {
+                        throw new GuardConfigurationException("정책은 등록된 관리자(Owner) 계정만 바꿀 수 있습니다.");
+                    }
 
-                (GuardPolicyDocument updated, string message) = edit(document);
-                _ = GuardPolicyStore.Write(policyPath, updated);
+                    (GuardPolicyDocument edited, message) = edit(document);
+                    return edited;
+                });
                 RecordPolicyChange(policyPath, updated.PolicyVersion, message);
                 output.WriteLine(message);
                 output.WriteLine($"정책 버전 {updated.PolicyVersion}으로 저장했습니다. 서비스가 몇 초 안에 반영합니다.");

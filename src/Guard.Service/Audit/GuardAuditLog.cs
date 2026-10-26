@@ -281,7 +281,8 @@ namespace Guard.Service.Audit
                     continue;
                 }
 
-                string fileName = launch.Path is { Length: > 0 } path ? Path.GetFileName(path) : "?";
+                // Event paths are Windows paths; split on both separators so this also works off Windows (CI).
+                string fileName = launch.Path is { Length: > 0 } path ? path[(path.LastIndexOfAny(['\\', '/']) + 1)..] : "?";
                 string app = MatchApp(configuration, launch.Fqbn)?.DisplayName ?? fileName;
                 entries.Add(launch.EventId == BlockedEventId
                     ? new GuardAuditEntry(launch.AtUtc, GuardAuditKind.LaunchBlocked, member.Name, app, $"실행을 막았어요 ({fileName})")

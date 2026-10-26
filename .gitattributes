@@ -1,5 +1,7 @@
 # Keep repository text consistent when Windows uses core.autocrlf.
 * text=auto eol=lf
+# cmd.exe misparses batch files with bare LF line endings.
+*.cmd text eol=crlf
 
 # Keep binary assets out of Git's text and line-ending conversion.
 *.7z binary

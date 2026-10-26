@@ -1,6 +1,8 @@
-# Build machine. Publishes guard.exe (Owner CLI) and guard-service.exe (Windows service) as self-contained
-# single-file win-x64 executables, plus the install scripts, into one folder that can be copied to a club PC.
-# A win-x64 publish rewrites package lock files, so it runs in a throwaway copy of the source tree.
+# Build machine. Publishes guard.exe (Owner command line), guard-service.exe (Windows service), guard-notifier.exe
+# (member tray notifier) and guard-admin.exe (Owner screen) as self-contained single-file win-x64 executables, plus
+# the install scripts and the Korean guide, into one folder that can be copied to a club PC.
+# A win-x64 publish rewrites package lock files, so it runs in a throwaway copy of the source tree. The copy lives
+# under artifacts\ on the repository drive rather than in %TEMP%, which keeps a nearly full system drive out of it.
 param(
     [string] $Output,
     [string] $Dotnet
@@ -16,7 +18,7 @@ if (-not $Dotnet) {
     $Dotnet = if (Test-Path -LiteralPath $repoSdk) { $repoSdk } else { 'dotnet' }
 }
 
-$work = Join-Path ([IO.Path]::GetTempPath()) "coms-pc-guard-publish-$([Guid]::NewGuid().ToString('N'))"
+$work = Join-Path $root "artifacts\publish-work-$([Guid]::NewGuid().ToString('N'))"
 & robocopy.exe $root $work /E /XD .git bin obj artifacts .dotnet TestResults .vs .superpowers /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) {
     throw "Copying the source tree failed (robocopy $LASTEXITCODE)."
@@ -28,7 +30,8 @@ try {
     }
     New-Item -ItemType Directory -Path $Output | Out-Null
 
-    foreach ($project in @('src\Guard.Cli\Guard.Cli.csproj', 'src\Guard.Host\Guard.Host.csproj')) {
+    $projects = 'src\Guard.Cli\Guard.Cli.csproj', 'src\Guard.Host\Guard.Host.csproj', 'src\Guard.Notifier\Guard.Notifier.csproj', 'src\Guard.Admin\Guard.Admin.csproj'
+    foreach ($project in $projects) {
         & $Dotnet publish (Join-Path $work $project) -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o $Output
         if ($LASTEXITCODE -ne 0) {
@@ -40,7 +43,13 @@ finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-ComsPcGuard.ps1'), (Join-Path $PSScriptRoot 'Uninstall-ComsPcGuard.ps1') -Destination $Output
+foreach ($script in 'Install-ComsPcGuard.ps1', 'Uninstall-ComsPcGuard.ps1', 'install.cmd', 'uninstall.cmd') {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination $Output
+}
+$guide = Join-Path $root 'docs\guide\owner-guide-ko.md'
+if (Test-Path -LiteralPath $guide) {
+    Copy-Item -LiteralPath $guide -Destination (Join-Path $Output 'GUIDE-KO.md')
+}
 Get-ChildItem -LiteralPath $Output -File | ForEach-Object {
     '{0,-28} {1,10:N0} bytes  sha256 {2}' -f $_.Name, $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }

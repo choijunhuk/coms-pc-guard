@@ -27,7 +27,7 @@ namespace Guard.Windows
                 RedirectStandardError = true,
                 CreateNoWindow = true,
             };
-            foreach (string argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) })
+            foreach (string argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) })
             {
                 info.ArgumentList.Add(argument);
             }

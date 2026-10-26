@@ -3,18 +3,16 @@
 | Item | State |
 | --- | --- |
 | Phase A approval | `APPROVED` |
-| Repository bootstrap | `COMPLETE` |
-| Core policy / PR #4 | `MERGED` (hosted clean run `34692272375`) |
-| Persistence/reconciliation | `COMPLETE` (PR #5, hosted run `34701889964`) |
-| Application identity portable contracts | `PASS` (Core 117, Service 125; 242/242 per timezone run) |
-| AppLocker preview/compiler and XML | `PASS` portable (Core 117, Service 148; 265/265 per timezone run) |
-| Isolated Windows VM | `BLOCKED_WINDOWS_VM` |
+| Core policy, persistence/reconciliation, identity, AppLocker compiler | `MERGED` (PRs #4-#7) |
+| Lean native spike (`docs/plans/2026-10-26-lean-native-mvp.md`) | `PASS` S1-S8 in the lab VM (`docs/evidence/2026-10-26-native-spike.md`) |
+| Native enforcement path (`guard apply`, adapter, reconciler) | `PASS` in the lab VM (block, temporary allow, audit, recovery, reboot, clear) |
+| Windows service + install/uninstall scripts | `PASS` in the lab VM (LocalSystem, auto start, protected data directory) |
+| Schedule-boundary latency on real hardware (PLAN §8.1) | `NOT_RUN` (lab VM: 12-17 s from policy-file change; 2-3 s from policy replacement) |
+| Running-process termination, external GPO/MDM coexistence, Owner IPC/UI, MSI | `NOT_IMPLEMENTED` |
 | WiX license eligibility | `WIX_ELIGIBILITY_CONFIRMED_EULA_ACCEPTANCE_PENDING` |
 
-Task 3 fresh local evidence is 265/265 passing tests in both default and `TZ=UTC` runs: Core 117 and Guard.Service 148. Locked restore, format, Release build, and diff check pass; Release build has zero warnings/errors. Application identity PR #6/run `34708235735` and AppLocker preview PR #7/run `34710288258` are merged hosted evidence for their respective portable slices.
+The project now blocks for real: a registered member is refused a registered signed EXE (Win32 1260) while other members, other binaries from the same publisher and product, and the Owner keep running. Temporary allowance and re-restriction reach an already logged-on session in 2-3 seconds. Local verification: locked restore, format, Release build, 316/316 tests in default and `TZ=UTC` runs (Core 117, Service 191, Cli 4, Windows 4).
 
-Identity semantics are explicit: AND within Publisher/PackagedApp fields, OR only across separately approved identities; discovery candidates remain Owner-confirmed proposals; updates require review unless another approved identity matches; cache keys include registration and reliable file stamps; process targeting requires PID + creation UTC + approved image identity. No native claim follows from these portable results.
+Lab: VirtualBox VM `COMS-PC-Guard-x64-Lab` on the Windows host's `D:` drive (Windows 11 Enterprise Evaluation, about 47 days of license left). The physical host was only read (`guard identify`, `guard status`).
 
-Read-only physical Windows inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.0.301 only, AppIDSvc Manual/Stopped, AppLocker cmdlet present, zero local/effective rules. SID intentionally omitted; host is not an authorized VM.
-
-Next action: Owner/IPC contracts or an authorized harmless-fixture Windows VM PoC; no UI until Phase B. Windows evidence-provider/signature verification, AppLocker application, AppIDSvc changes, SID token proof, GPO/CSP coexistence, blocking, reboot, rollback, service, ACL, IPC, UI, installer, and real process termination remain `BLOCKED_WINDOWS_VM`/not implemented.
+Next: cut PowerShell launches per pass from four to two and measure boundary latency on real hardware; atomic policy-file editing commands; running-process termination at restriction start; a one-week AuditOnly run on a club PC after the club agrees.

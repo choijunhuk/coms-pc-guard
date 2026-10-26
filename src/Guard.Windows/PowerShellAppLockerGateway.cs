@@ -50,8 +50,22 @@ namespace Guard.Windows
             $document.XmlResolver = $null
             $document.LoadXml($xml)
             if ($document.DocumentElement.Name -ne 'AppLockerPolicy') { throw 'The input is not an AppLocker policy.' }
-            $policy = [Microsoft.Security.ApplicationId.PolicyManagement.PolicyModel.AppLockerPolicy]::FromXml($xml)
-            Set-AppLockerPolicy -PolicyObject $policy
+            # The caller's private temp directory (SYSTEM's for the service); CreateNew refuses a pre-planted file.
+            $file = Join-Path ([IO.Path]::GetTempPath()) ('coms-guard-' + [Guid]::NewGuid().ToString('N') + '.xml')
+            $stream = [IO.File]::Open($file, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes($xml)
+                $stream.Write($bytes, 0, $bytes.Length)
+            }
+            finally {
+                $stream.Dispose()
+            }
+            try {
+                Set-AppLockerPolicy -XmlPolicy $file
+            }
+            finally {
+                Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+            }
             ConvertTo-AsciiJson ([pscustomobject]@{ appliedUtc = [DateTimeOffset]::UtcNow.ToString('O') })
             """;
 

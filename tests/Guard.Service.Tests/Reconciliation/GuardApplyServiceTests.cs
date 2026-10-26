@@ -118,6 +118,27 @@ namespace Guard.Service.Tests.Reconciliation
                 Assert.AreEqual(0, gateway.ApplyCount);
             }
         }
+
+        [TestMethod]
+        public async Task Apply_FailureAfterWrite_ReportsFailedThenRecoversNextPass()
+        {
+            await using TemporarySqliteDatabase db = new();
+            ManualTimeProvider clock = new(AppLockerTestData.InsideWindow);
+            (GuardApplyService service, FakeAppLockerGateway gateway, _, PolicyOperationGate gate) = await CreateAsync(db, clock);
+            using (gate)
+            {
+                gateway.FailAfterApply = true;
+                GuardApplyResult failed = await service.ApplyAsync(Configuration(), CancellationToken.None);
+
+                gateway.FailAfterApply = false;
+                clock.Advance(TimeSpan.FromSeconds(15));
+                GuardApplyResult next = await service.ApplyAsync(Configuration(), CancellationToken.None);
+
+                Assert.AreEqual(GuardApplyStatus.Failed, failed.Status);
+                Assert.AreEqual(GuardApplyStatus.Unchanged, next.Status);
+                Assert.AreEqual(1, gateway.ApplyCount);
+            }
+        }
 #pragma warning restore CA1707
     }
 }

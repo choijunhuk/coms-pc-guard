@@ -67,10 +67,14 @@ namespace Guard.Cli
                 GuardApplyStatus.Rejected => ($"거부됨: {result.Outcome?.DiagnosticCode}", NotEligible),
                 GuardApplyStatus.Busy => ("다른 적용 작업이 진행 중입니다. 잠시 후 다시 실행하세요.", NativeFailure),
                 GuardApplyStatus.RecoveryPending => ($"이전 적용이 중단된 상태라 복구를 먼저 시도했지만 끝나지 않았습니다 ({result.Outcome?.Kind} {result.Outcome?.DiagnosticCode}).", NativeFailure),
-                GuardApplyStatus.Failed => throw new NotImplementedException(),
                 _ => ($"실패: {result.Outcome?.Kind} {result.Outcome?.DiagnosticCode}", NativeFailure),
             };
             (code == Success ? output : error).WriteLine(message);
+            if (result.Outcome?.Exception is { } cause)
+            {
+                error.WriteLine($"원인: {cause.GetType().Name}: {cause.Message}");
+            }
+
             return code;
         }
 
@@ -153,6 +157,19 @@ namespace Guard.Cli
                 return Fail(error, $"로컬 정책이 COMS PC Guard가 만든 것이 아니라서 지우지 않습니다 ({before.LocalClassification}).", NotEligible);
             }
 
+            // Step 1: allow-all baseline. AppLocker keeps the last non-empty policy enforced after an empty policy is set,
+            // so the rules left in force must be the ones that allow everything (measured in the lab, see DR-010).
+            AppLockerArtifact allowAll = AppLockerArtifact.AllowAllBaseline(before.CurrentArtifact.PolicyVersion);
+            await gateway.ApplyLocalPolicyAsync(allowAll.Xml, CancellationToken.None).ConfigureAwait(false);
+            AppLockerInventoryReading released = AppLockerInventoryReader.Read(await gateway.ReadStateAsync(CancellationToken.None).ConfigureAwait(false));
+            if (released.CurrentArtifact?.Sha256Hex != allowAll.Sha256Hex)
+            {
+                return Fail(error, $"허용 기준 정책으로 바꾸지 못해 지우기를 멈췄습니다 ({released.LocalClassification}).", NativeFailure);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+            // Step 2: remove the local policy entirely.
             await gateway.ApplyLocalPolicyAsync(EmptyPolicyXml, CancellationToken.None).ConfigureAwait(false);
             AppLockerInventoryReading after = AppLockerInventoryReader.Read(await gateway.ReadStateAsync(CancellationToken.None).ConfigureAwait(false));
             if (after.Inventory.Local != AppLockerPolicyPresence.Absent)

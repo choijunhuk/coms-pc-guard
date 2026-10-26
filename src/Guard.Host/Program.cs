@@ -13,6 +13,8 @@ static async Task<int> RunServiceAsync(string[] args)
         settings.SourceName = "COMS PC Guard";
         settings.LogName = "Application";
     });
+    // The EventLog provider defaults to Warning; "applied revision N" is the audit trail the Owner needs.
+    _ = builder.Logging.AddFilter<Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider>(null, LogLevel.Information);
     _ = builder.Services.AddSingleton(TimeProvider.System);
     _ = builder.Services.AddSingleton(new GuardHostOptions(
         builder.Configuration["DataDirectory"] ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ComsPcGuard")));

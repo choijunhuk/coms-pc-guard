@@ -51,6 +51,23 @@ namespace Guard.Service.AppLocker
                 : throw new InvalidOperationException($"The preview is not eligible: {string.Join(", ", preview.Blockers)}");
         }
 
+        /// <summary>
+        /// The product baseline alone (Allow Everyone, path *). Measured in the lab: replacing a policy takes effect in about 2 s,
+        /// but replacing it with an EMPTY policy leaves the last non-empty rules enforced until reboot (gpupdate does not help).
+        /// Clearing therefore applies this allow-all step first, so whatever stays cached allows everything.
+        /// </summary>
+        public static AppLockerArtifact AllowAllBaseline(long revision)
+        {
+            AppLockerOwnedRule baseline = new(
+                DeterministicRuleId.Create(AppLockerCollectionType.Exe, AppLockerRuleAction.Allow, "S-1-1-0", string.Empty, string.Empty),
+                AppLockerRuleAction.Allow,
+                "S-1-1-0",
+                string.Empty,
+                string.Empty,
+                new AppLockerPathCondition());
+            return new AppLockerArtifact(revision, AppLockerEnforcementMode.Enabled, [baseline]);
+        }
+
         public PolicyArtifact ToPolicyArtifact(DateTimeOffset createdAtUtc)
         {
             return new PolicyArtifact(PolicyVersion, CanonicalJson, Sha256Hex, RequiredProtection, OwnedPolicyState.Present, createdAtUtc.ToUniversalTime());

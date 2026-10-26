@@ -55,12 +55,6 @@ namespace Guard.Service.Reconciliation
                 ReconciliationOutcomeKind.Conflict => GuardApplyStatus.Conflict,
                 ReconciliationOutcomeKind.Rejected or ReconciliationOutcomeKind.Unsupported => GuardApplyStatus.Rejected,
                 ReconciliationOutcomeKind.Busy => GuardApplyStatus.Busy,
-                ReconciliationOutcomeKind.RecoveryRequired => throw new NotImplementedException(),
-                ReconciliationOutcomeKind.NoWork => throw new NotImplementedException(),
-                ReconciliationOutcomeKind.RecoveryBlocked => throw new NotImplementedException(),
-                ReconciliationOutcomeKind.RecoveryFailed => throw new NotImplementedException(),
-                ReconciliationOutcomeKind.RestoredLastGood => throw new NotImplementedException(),
-                ReconciliationOutcomeKind.NoLastGood => throw new NotImplementedException(),
                 _ => GuardApplyStatus.Failed,
             };
             return new GuardApplyResult(status, outcome, result, artifact);

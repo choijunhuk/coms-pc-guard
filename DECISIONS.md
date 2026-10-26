@@ -43,3 +43,13 @@ Application identity PR #6 merged hosted run `34708235735`; the AppLocker previe
 Lab specifics: VirtualBox 7.2.16 on the Windows 11 Home host (VMs and evidence on `D:`), Windows 11 Enterprise Evaluation build 26200 guest. Lab-only automation uses the guest's built-in Administrator through VirtualBox guest control after a single on-screen UAC approval; passwords live in `D:\COMS-PC-Guard-VM\Secrets`, never in Git.
 
 Publisher identities must be read from the file (`Get-AppLockerFileInformation`), never typed: the guest's `charmap.exe` carries the ProductName `MICROSOFTÂ® WINDOWSÂ® OPERATING SYSTEM` (U+00C2 U+00AE), unlike `winver.exe`/`hostname.exe` (`MICROSOFT® WINDOWS® OPERATING SYSTEM`).
+
+## DR-010 — Clear through an allow-all baseline, confirm from the local policy
+
+Measured in the lab VM (`docs/evidence/2026-10-26-native-spike.md`): replacing the local AppLocker policy reaches running sessions in 2-3 s, but replacing it with an EMPTY policy leaves the last non-empty rules enforced (still blocking after two minutes and `gpupdate /force`). `guard clear` and the uninstall script therefore first apply the product baseline alone (Allow Everyone, path `*`), confirm it from the local policy, wait five seconds, and only then apply the empty policy; whatever stays cached allows everything.
+
+`Get-AppLockerPolicy -Effective` also lags enforcement, so the adapter confirms an artifact from the local policy: the baseline rule's Description carries the revision, rule IDs recompute from rule content (names never prove ownership), and the canonical artifact JSON is computed identically from a compiled preview and from the observed XML. A local policy the product does not recognize is reported with a sentinel revision that can never confirm, so recovery never adopts foreign state.
+
+Each distinct compiled result gets its own durable revision (the Owner's `policyVersion` names the file, not the compiled rules), because the store keeps revisions immutable (DR-003).
+
+`dotnet format` auto-fixes for IDE0010/IDE0072 inserted `throw new NotImplementedException()` arms ahead of intentional default arms and crashed `guard apply` in the VM; both rules are disabled in `.editorconfig`.

@@ -93,6 +93,20 @@ namespace Guard.Service.Tests.AppLocker
         }
 
         [TestMethod]
+        public void AllowAllBaseline_IsOneRecognizedAllowEveryoneRule()
+        {
+            AppLockerArtifact allowAll = AppLockerArtifact.AllowAllBaseline(9);
+
+            (bool recognized, AppLockerArtifact? observed, _) = Observe(AppLockerTestData.AsWindowsReports(allowAll.Xml));
+
+            Assert.AreEqual(1, allowAll.Rules.Count);
+            Assert.AreEqual(AppLockerRuleAction.Allow, allowAll.Rules[0].Action);
+            Assert.AreEqual("S-1-1-0", allowAll.Rules[0].Sid);
+            Assert.IsTrue(recognized);
+            Assert.AreEqual(allowAll.Sha256Hex, observed!.Sha256Hex);
+        }
+
+        [TestMethod]
         public void Parse_ActiveRuleCollectionExtension_CountsAsConfigured()
         {
             string xml = AppLockerTestData.EmptyWindowsPolicy().Replace(

@@ -116,6 +116,29 @@ namespace Guard.Cli.Tests
             Assert.AreEqual(GuardCli.ConfigurationError, code);
             StringAssert.Contains(error, "guard init");
         }
+
+        [TestMethod]
+        public void Edits_AreRecorded_AndTheRecordExportsAsCsv()
+        {
+            _ = Run(null, "init");
+            _ = Run(null, "emergency", "on");
+            string csv = Path.Combine(_directory, "기록.csv");
+
+            (int showCode, string shown, _) = Run(null, "log");
+            (int exportCode, string exported, _) = Run(null, "log", "export", csv, "--days", "3");
+            (int badCode, _, string badError) = Run(null, "log", "--days", "90");
+
+            Assert.AreEqual(GuardCli.Success, showCode);
+            StringAssert.Contains(shown, "[설정 변경] 긴급 제한을 켰습니다");
+            StringAssert.Contains(shown, "기록 2건");
+            Assert.AreEqual(GuardCli.Success, exportCode);
+            StringAssert.Contains(exported, "2건을 저장했습니다");
+            string[] lines = File.ReadAllLines(csv);
+            Assert.AreEqual("시각,종류,부원,게임,내용", lines[0]);
+            Assert.HasCount(3, lines);
+            Assert.AreEqual(GuardCli.UsageError, badCode);
+            StringAssert.Contains(badError, "30일");
+        }
 #pragma warning restore CA1707
     }
 }

@@ -65,6 +65,23 @@ namespace Guard.Windows.Tests
             Assert.IsNull(accounts[1].FullName);
             Assert.AreEqual("S-1-5-21-1-2-3-1001", single.Single().Sid);
         }
+
+        [TestMethod]
+        public void ParseLaunchEvents_ReadsLatestAndEachEvent()
+        {
+            const string json = /*lang=json,strict*/ """{"latest":42,"events":{"recordId":41,"timeUtc":"2026-10-26T01:00:00.0000000Z","id":8004,"userSid":"S-1-5-21-1-2-3-1001","path":"C:\\Games\\game.exe","fqbn":"O=X\\P\\GAME.EXE\\1.0.0.0"}}""";
+            const string empty = /*lang=json,strict*/ """{"latest":0,"events":[]}""";
+
+            Service.Audit.AppLockerLaunchEvents parsed = NativeResponseParser.ParseLaunchEvents(json);
+
+            Assert.AreEqual(42, parsed.LatestRecordId);
+            Service.Audit.AppLockerLaunchEvent launch = parsed.Events.Single();
+            Assert.AreEqual(41, launch.RecordId);
+            Assert.AreEqual(8004, launch.EventId);
+            Assert.AreEqual(new DateTimeOffset(2026, 10, 26, 1, 0, 0, TimeSpan.Zero), launch.AtUtc);
+            Assert.AreEqual(@"O=X\P\GAME.EXE\1.0.0.0", launch.Fqbn);
+            Assert.IsEmpty(NativeResponseParser.ParseLaunchEvents(empty).Events);
+        }
 #pragma warning restore CA1707
     }
 }

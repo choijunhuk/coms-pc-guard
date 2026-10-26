@@ -1,5 +1,6 @@
 using System.Globalization;
 using Guard.Service.AppLocker;
+using Guard.Service.Audit;
 using Guard.Service.Configuration;
 using Guard.Service.Status;
 using Guard.Windows;
@@ -84,6 +85,12 @@ namespace Guard.Admin
         private readonly DateTimePicker _holidayDate = new() { Format = DateTimePickerFormat.Long, Width = 200 };
         private readonly ListBox _holidays = new() { IntegralHeight = false };
 
+        private readonly GuardAuditLog _audit;
+        private readonly ComboBox _logPeriod = new() { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly Label _logCount = new() { AutoSize = true, Margin = new Padding(12, 8, 3, 3) };
+        private readonly ListView _logView = new() { View = View.Details, FullRowSelect = true, HeaderStyle = ColumnHeaderStyle.Nonclickable };
+        private readonly TabPage _logPage;
+
         private GuardPolicyDocument? _document;
         private bool _rendering;
 
@@ -93,6 +100,7 @@ namespace Guard.Admin
             _statusPath = Path.Combine(dataDirectory, "status", "status.json");
             _gateway = gateway;
             _userSid = userSid;
+            _audit = GuardAuditLog.ForDataDirectory(dataDirectory);
 
             SuspendLayout();
             AutoScaleDimensions = new SizeF(96F, 96F);
@@ -106,7 +114,15 @@ namespace Guard.Admin
             Icon = SystemIcons.Shield;
 
             TabControl tabs = new() { Dock = DockStyle.Fill, Padding = new Point(14, 5) };
-            tabs.TabPages.AddRange([StatusPage(), MembersPage(), GamesPage(), GrantsPage(), SchedulePage()]);
+            _logPage = LogPage();
+            tabs.TabPages.AddRange([StatusPage(), MembersPage(), GamesPage(), GrantsPage(), SchedulePage(), _logPage]);
+            tabs.SelectedIndexChanged += (_, _) =>
+            {
+                if (tabs.SelectedTab == _logPage)
+                {
+                    RenderLog();
+                }
+            };
             StatusStrip strip = new();
             _ = strip.Items.Add(_message);
             Controls.Add(tabs);
@@ -229,6 +245,25 @@ namespace Guard.Admin
                 Row(_holidayDate, addHoliday, removeHoliday));
         }
 
+        private TabPage LogPage()
+        {
+            _logPeriod.Items.AddRange([new Choice("1", "최근 1일"), new Choice("7", "최근 7일"), new Choice("30", "최근 30일")]);
+            _logPeriod.SelectedIndex = 1;
+            _logPeriod.SelectedIndexChanged += (_, _) => RenderLog();
+            _ = _logView.Columns.Add("시각", 130);
+            _ = _logView.Columns.Add("종류", 90);
+            _ = _logView.Columns.Add("부원", 100);
+            _ = _logView.Columns.Add("게임", 120);
+            _ = _logView.Columns.Add("내용", 420);
+            Button refresh = Act("새로 고침", (_, _) => RenderLog());
+            Button export = Act("엑셀용 파일로 저장…", (_, _) => ExportLog());
+            return Page(
+                "기록",
+                _logView,
+                Help("막은 실행, 시험 운영 중 막았을 실행, 게임 종료, 설정 변경, 적용 문제가 기록돼요. 기록은 30일 동안 보관해요."),
+                Row(_logPeriod, refresh, export, _logCount));
+        }
+
         private static TabPage Page(string title, Control fill, params Control[] topToBottom)
         {
             TabPage page = new(title) { Padding = new Padding(10), UseVisualStyleBackColor = true };
@@ -319,7 +354,9 @@ namespace Guard.Admin
 
             try
             {
-                _ = GuardPolicyStore.Write(_policyPath, GuardPolicyEditor.CreateDefault(_userSid));
+                GuardPolicyDocument created = GuardPolicyEditor.CreateDefault(_userSid);
+                _ = GuardPolicyStore.Write(_policyPath, created);
+                RecordChange(created.PolicyVersion, "새 정책을 만들었어요.");
                 Say("새 정책을 만들었어요. 기본값: 매일 09:00~18:00 제한, 시험 운영 모드.");
             }
             catch (Exception exception) when (exception is GuardConfigurationException or IOException or UnauthorizedAccessException)
@@ -495,6 +532,7 @@ namespace Guard.Admin
 
                 GuardPolicyDocument updated = edit(current);
                 _ = GuardPolicyStore.Write(_policyPath, updated);
+                RecordChange(updated.PolicyVersion, done);
                 Say($"{done} 설정 {updated.PolicyVersion}번으로 저장했어요. 서비스가 몇 초 안에 반영해요.");
             }
             catch (GuardConfigurationException exception)
@@ -662,6 +700,87 @@ namespace Guard.Admin
             Apply(
                 document => GuardPolicyEditor.SetDateOverride(document, date, []),
                 $"{date.ToString("M월 d일", CultureInfo.GetCultureInfo("ko-KR"))}은(는) 하루 종일 제한하지 않아요.");
+        }
+
+        // ---------- activity record ----------
+
+        private void RenderLog()
+        {
+            int days = _logPeriod.SelectedItem is Choice { Key: { } key } ? int.Parse(key, CultureInfo.InvariantCulture) : 7;
+            IReadOnlyList<GuardAuditEntry> entries;
+            try
+            {
+                entries = ReadLog(days);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Say($"기록을 읽지 못했어요: {exception.Message}");
+                return;
+            }
+
+            TimeZoneInfo zone = Zone(_document?.TimeZoneId);
+            _logView.BeginUpdate();
+            _logView.Items.Clear();
+            foreach (GuardAuditEntry entry in entries.Reverse())
+            {
+                _ = _logView.Items.Add(new ListViewItem(
+                [
+                    TimeZoneInfo.ConvertTime(entry.AtUtc, zone).ToString("MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                    GuardAuditLog.Label(entry.Kind),
+                    entry.Member ?? string.Empty,
+                    entry.App ?? string.Empty,
+                    entry.Detail,
+                ]));
+            }
+
+            _logView.EndUpdate();
+            _logCount.Text = $"{entries.Count}건 (최신이 위)";
+        }
+
+        private void ExportLog()
+        {
+            int days = _logPeriod.SelectedItem is Choice { Key: { } key } ? int.Parse(key, CultureInfo.InvariantCulture) : 30;
+            using SaveFileDialog dialog = new()
+            {
+                Title = "기록을 저장할 곳을 고르세요",
+                Filter = "엑셀에서 열 수 있는 파일 (*.csv)|*.csv",
+                FileName = $"COMS-PC-Guard-기록-{DateTime.Now:yyyyMMdd}.csv",
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            try
+            {
+                IReadOnlyList<GuardAuditEntry> entries = ReadLog(days);
+                GuardAuditLog.WriteCsv(dialog.FileName, entries, Zone(_document?.TimeZoneId));
+                Say($"기록 {entries.Count}건을 저장했어요: {dialog.FileName}");
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                ShowError($"파일을 저장하지 못했어요: {exception.Message}");
+            }
+        }
+
+        private IReadOnlyList<GuardAuditEntry> ReadLog(int days)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return _audit.Read(now.AddDays(-days), now.AddSeconds(1));
+        }
+
+        /// <summary>Best effort: a missing record line must never make a saved change look failed.</summary>
+        private void RecordChange(long policyVersion, string text)
+        {
+            try
+            {
+                _audit.Append(new GuardAuditEntry(DateTimeOffset.UtcNow, GuardAuditKind.PolicyChanged, null, null, $"{text} (설정 {policyVersion}번, {Environment.UserName}, 관리 화면)"));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Say($"설정은 저장했지만 기록을 남기지 못했어요: {exception.Message}");
+            }
         }
 
         // ---------- helpers ----------

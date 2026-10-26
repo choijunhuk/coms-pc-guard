@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Guard.Service.AppLocker;
+using Guard.Service.Audit;
 
 namespace Guard.Windows
 {
@@ -65,6 +66,28 @@ namespace Guard.Windows
                 _ => [],
             };
             return [.. items.Select(item => new LocalAccount(Required(item, "name"), Required(item, "sid"), Optional(item, "fullName") is { Length: > 0 } full ? full : null))];
+        }
+
+        internal static AppLockerLaunchEvents ParseLaunchEvents(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            long latest = root.TryGetProperty("latest", out JsonElement latestValue) && latestValue.ValueKind == JsonValueKind.Number ? latestValue.GetInt64() : 0;
+            IEnumerable<JsonElement> items = root.TryGetProperty("events", out JsonElement events)
+                ? events.ValueKind switch
+                {
+                    JsonValueKind.Array => events.EnumerateArray(),
+                    JsonValueKind.Object => [events],
+                    _ => [],
+                }
+                : [];
+            return new AppLockerLaunchEvents(latest, [.. items.Select(item => new AppLockerLaunchEvent(
+                item.GetProperty("recordId").GetInt64(),
+                DateTimeOffset.Parse(Required(item, "timeUtc"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUniversalTime(),
+                item.GetProperty("id").GetInt32(),
+                Optional(item, "userSid"),
+                Optional(item, "path"),
+                Optional(item, "fqbn")))]);
         }
 
         internal static bool ParseTerminated(string json)

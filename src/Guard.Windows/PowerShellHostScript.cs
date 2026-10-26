@@ -124,6 +124,33 @@ namespace Guard.Windows
                 [pscustomobject]@{ terminated = $true; reason = 'stopped' }
             }
 
+            function Get-GuardLaunchEvents([long] $AfterRecordId) {
+                $log = 'Microsoft-Windows-AppLocker/EXE and DLL'
+                $latest = 0
+                try { $latest = [long](Get-WinEvent -LogName $log -MaxEvents 1 -ErrorAction Stop).RecordId } catch { }
+                $found = New-Object System.Collections.ArrayList
+                if ($AfterRecordId -ge 0 -and $latest -gt $AfterRecordId) {
+                    $filter = "*[System[(EventID=8003 or EventID=8004) and EventRecordID > $AfterRecordId]]"
+                    $events = @()
+                    try { $events = @(Get-WinEvent -LogName $log -FilterXPath $filter -MaxEvents 500 -ErrorAction Stop) } catch { }
+                    foreach ($record in $events) {
+                        $data = @{}
+                        foreach ($node in ([xml]$record.ToXml()).Event.UserData.FirstChild.ChildNodes) { $data[$node.LocalName] = [string]$node.InnerText }
+                        $path = $data['FullFilePath']
+                        if (-not $path) { $path = $data['FilePath'] }
+                        [void]$found.Add([pscustomobject]@{
+                            recordId = [long]$record.RecordId
+                            timeUtc = $record.TimeCreated.ToUniversalTime().ToString('o')
+                            id = [int]$record.Id
+                            userSid = $(if ($record.UserId) { [string]$record.UserId.Value } else { $null })
+                            path = [string]$path
+                            fqbn = [string]$data['Fqbn']
+                        })
+                    }
+                }
+                [pscustomobject]@{ latest = $latest; events = [object[]]$found.ToArray() }
+            }
+
             function Get-GuardLocalUsers {
                 $found = New-Object System.Collections.ArrayList
                 foreach ($user in Get-CimInstance -ClassName Win32_UserAccount -Filter 'LocalAccount=True AND Disabled=False') {
@@ -149,6 +176,7 @@ namespace Guard.Windows
                         'processes' { $result = [object[]]@(Find-GuardProcesses $arguments.binaries $arguments.ownerSids) }
                         'terminate' { $result = Stop-GuardProcess ([int]$arguments.pid) ([string]$arguments.startUtc) }
                         'users' { $result = [object[]]@(Get-GuardLocalUsers) }
+                        'events' { $result = Get-GuardLaunchEvents ([long]$arguments.after) }
                         default { throw "Unknown operation '$($request.op)'." }
                     }
                     $response = @{ id = $id; ok = $true; result = $result }

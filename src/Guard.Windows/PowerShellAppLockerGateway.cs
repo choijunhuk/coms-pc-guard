@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using Guard.Service.AppLocker;
+using Guard.Service.Audit;
 
 namespace Guard.Windows
 {
@@ -11,7 +12,7 @@ namespace Guard.Windows
     /// Applying policy or stopping processes requires an elevated or SYSTEM caller.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public sealed partial class PowerShellAppLockerGateway : IAppLockerNativeGateway, INativeProcessGateway, IDisposable
+    public sealed partial class PowerShellAppLockerGateway : IAppLockerNativeGateway, INativeProcessGateway, IAppLockerEventSource, IDisposable
     {
         private readonly PowerShellSession _session = new();
 
@@ -55,6 +56,11 @@ namespace Guard.Windows
                 new Dictionary<string, object?> { ["pid"] = processId, ["startUtc"] = startedAtUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture) },
                 cancellationToken).ConfigureAwait(false);
             return NativeResponseParser.ParseTerminated(json);
+        }
+
+        public async Task<AppLockerLaunchEvents> ReadLaunchEventsAsync(long afterRecordId, CancellationToken cancellationToken)
+        {
+            return NativeResponseParser.ParseLaunchEvents(await _session.InvokeAsync("events", new Dictionary<string, object?> { ["after"] = afterRecordId }, cancellationToken).ConfigureAwait(false));
         }
 
         /// <summary>Enabled local accounts, for picking members without typing account names.</summary>

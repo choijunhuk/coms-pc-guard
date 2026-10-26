@@ -49,6 +49,7 @@ namespace Guard.Cli
                     : environment.ResolveAccount(owner).Sid;
                 GuardPolicyDocument document = GuardPolicyEditor.CreateDefault(ownerSid);
                 _ = GuardPolicyStore.Write(policyPath, document);
+                RecordPolicyChange(policyPath, document.PolicyVersion, "새 정책을 만들었습니다");
                 output.WriteLine($"새 정책 파일을 만들었습니다: {policyPath}");
                 output.WriteLine("기본값: 매일 09:00~18:00 제한, '시험 운영(기록만)' 모드. 부원과 게임을 등록한 뒤 일주일 지켜보고 guard mode enforce로 바꾸세요.");
                 return Success;
@@ -269,6 +270,7 @@ namespace Guard.Cli
 
                 (GuardPolicyDocument updated, string message) = edit(document);
                 _ = GuardPolicyStore.Write(policyPath, updated);
+                RecordPolicyChange(policyPath, updated.PolicyVersion, message);
                 output.WriteLine(message);
                 output.WriteLine($"정책 버전 {updated.PolicyVersion}으로 저장했습니다. 서비스가 몇 초 안에 반영합니다.");
                 return Success;

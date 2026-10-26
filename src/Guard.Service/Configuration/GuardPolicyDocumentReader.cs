@@ -16,15 +16,13 @@ namespace Guard.Service.Configuration
         public const int MaximumDocumentBytes = 1024 * 1024;
         public const string DefaultTimeZoneId = "Korea Standard Time";
 
-        private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
-        {
-            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-            AllowTrailingCommas = false,
-            ReadCommentHandling = JsonCommentHandling.Disallow,
-            Converters = { new JsonStringEnumConverter(allowIntegerValues: false) },
-        };
-
         public static GuardConfiguration Parse(string json)
+        {
+            return ToConfiguration(ParseDocument(json));
+        }
+
+        /// <summary>Deserializes without semantic validation; editors use this, then <see cref="ToConfiguration"/> validates.</summary>
+        public static GuardPolicyDocument ParseDocument(string json)
         {
             ArgumentNullException.ThrowIfNull(json);
             if (Encoding.UTF8.GetByteCount(json) > MaximumDocumentBytes)
@@ -35,15 +33,23 @@ namespace Guard.Service.Configuration
             GuardPolicyDocument? document;
             try
             {
-                document = JsonSerializer.Deserialize<GuardPolicyDocument>(json, SerializerOptions);
+                document = JsonSerializer.Deserialize<GuardPolicyDocument>(json, Options);
             }
             catch (JsonException exception)
             {
                 throw new GuardConfigurationException($"The policy file is not valid JSON for schema {CurrentSchemaVersion}: {exception.Message}", exception);
             }
 
-            return ToConfiguration(document ?? throw new GuardConfigurationException("The policy file is empty."));
+            return document ?? throw new GuardConfigurationException("The policy file is empty.");
         }
+
+        internal static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
+        {
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            AllowTrailingCommas = false,
+            ReadCommentHandling = JsonCommentHandling.Disallow,
+            Converters = { new JsonStringEnumConverter(allowIntegerValues: false) },
+        };
 
         public static GuardConfiguration ToConfiguration(GuardPolicyDocument document)
         {

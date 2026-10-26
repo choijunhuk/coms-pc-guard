@@ -5,7 +5,7 @@ namespace Guard.Service.Configuration
     /// the service is its only reader and the Owner CLI its only writer. Raw documents are untrusted until
     /// <see cref="GuardPolicyDocumentReader"/> validates them.
     /// </summary>
-    public sealed class GuardPolicyDocument
+    public sealed record GuardPolicyDocument
     {
         public int SchemaVersion { get; init; }
 
@@ -30,14 +30,14 @@ namespace Guard.Service.Configuration
         public bool AuditOnly { get; init; }
     }
 
-    public sealed class GuardMemberDocument
+    public sealed record GuardMemberDocument
     {
         public string? Name { get; init; }
 
         public string? Sid { get; init; }
     }
 
-    public sealed class GuardApplicationDocument
+    public sealed record GuardApplicationDocument
     {
         public string? AppId { get; init; }
 
@@ -46,7 +46,7 @@ namespace Guard.Service.Configuration
         public IReadOnlyList<GuardPublisherIdentityDocument>? PublisherIdentities { get; init; }
     }
 
-    public sealed class GuardPublisherIdentityDocument
+    public sealed record GuardPublisherIdentityDocument
     {
         public string? IdentityId { get; init; }
 
@@ -61,7 +61,7 @@ namespace Guard.Service.Configuration
         public string? MaximumVersion { get; init; }
     }
 
-    public sealed class GuardWeeklyRuleDocument
+    public sealed record GuardWeeklyRuleDocument
     {
         public string? Id { get; init; }
 
@@ -74,7 +74,7 @@ namespace Guard.Service.Configuration
         public bool AllDay { get; init; }
     }
 
-    public sealed class GuardDateOverrideDocument
+    public sealed record GuardDateOverrideDocument
     {
         public string? Id { get; init; }
 
@@ -83,14 +83,14 @@ namespace Guard.Service.Configuration
         public IReadOnlyList<GuardTimeWindowDocument>? Windows { get; init; }
     }
 
-    public sealed class GuardTimeWindowDocument
+    public sealed record GuardTimeWindowDocument
     {
         public string? Start { get; init; }
 
         public string? End { get; init; }
     }
 
-    public sealed class GuardTemporaryGrantDocument
+    public sealed record GuardTemporaryGrantDocument
     {
         public string? Id { get; init; }
 

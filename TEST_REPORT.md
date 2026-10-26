@@ -62,3 +62,20 @@ Read-only physical inventory on 2026-09-13: Windows 11 Home build 26200, .NET 9.
 | `guard apply` incl. recovery of an interrupted attempt | `PASS` |
 | Service install, policy-file change applied (16.9 s / 11.7 s in the slow nested VM) | `PASS` functional; latency target `NOT_RUN` on real hardware |
 | Running-process termination, GPO/MDM coexistence, multi-session, sleep/resume | `NOT_RUN` |
+
+## 2026-10-26 Owner tools (`feat/owner-tools`)
+
+- Host: Windows 11 Home build 26200; SDK repository-local .NET 10.0.401. Locked restore, format verification, Release build (0 warnings), `git diff --check`: pass.
+- Full tests: 355/355 in default and `TZ=UTC` runs (Core 117, Service 222, Cli 10, Windows 6), including the review follow-ups (edit lock, separate IDs for same-named games, unknown state without decisions, case-insensitive running-game match). New suites: policy editor and commands, running-game enforcer, status file and alerts, activity record (append/read/prune/CSV/formula neutralisation/launch-event mapping), `guard log`, PowerShell response parsing for accounts and events.
+- Lab (details in `docs/evidence/2026-10-26-owner-tools.md`):
+
+| Scenario | Classification |
+| --- | --- |
+| Install from zip, ACLs, Run key, shortcut, default policy | `PASS` (after Korean shortcut fix) |
+| Policy change to applied (persistent host) | `PASS` 2.9-7.6 s (was 12-17 s) |
+| Audit-mode launch recorded (8003) / blocked launch recorded (8004) | `PASS` |
+| Member reads own status only; cannot write status or read policy | `PASS` |
+| Running game warned then stopped after 15 s | `PASS` (after start-time comparison fix) |
+| Activity record and CSV export | `PASS` |
+| Owner screen and notifier start-up | `PASS` (visual pop-ups at a member desktop `NOT_RUN`) |
+| Uninstall | `PASS` |

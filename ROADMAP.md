@@ -9,8 +9,8 @@
 - **AppLocker preview/compiler:** merged in PR #7 with hosted run `34710288258`; local 265/265 per timezone. XML remains preview-only and no native policy is applied.
 - **Next — Owner/IPC contracts or authorized Windows VM PoC:** define caller/trust boundaries and provider interfaces, or run harmless-fixture AppLocker evidence in an authorized isolated VM. No UI until Phase B.
 - **Lean native spike (2026-10-26):** S1-S8 PASS in the lab VM; native adapter, `guard apply`, Windows service and install scripts verified there. See `docs/evidence/2026-10-26-native-spike.md`.
-- **Next:** fewer PowerShell launches per pass and real-hardware latency; atomic policy editing commands; running-process termination; AuditOnly week on a club PC.
-- **Owner, IPC, ACL, recovery; Admin/Notifier; MSI lifecycle:** remain gated on the Windows enforcement contract and WiX `wix7` EULA acceptance.
+- **Owner tools (2026-10-26, `feat/owner-tools`):** persistent PowerShell host, Owner policy commands, warning-then-stop for running games, status file + member notifier, Owner screen, 30-day activity record with CSV export, zip package with double-click installer and Korean guide. Lab evidence in `docs/evidence/2026-10-26-owner-tools.md`.
+- **Next:** the Owner's WiX v7 EULA decision (MSI, issue #3); notifier pop-ups and stop warning checked at a real member desktop; a one-week audit-mode run on a club PC after the club agrees.
 
 Portable tests and hosted CI are not native Windows acceptance evidence. A missing VM remains `BLOCKED_WINDOWS_VM`, not an invitation to substitute macOS or CI results.
 

@@ -22,3 +22,7 @@ dotnet_diagnostic.CA*.severity = warning
 # default arm; dotnet format applied them silently and broke guard apply. Keep defaults explicit instead.
 dotnet_diagnostic.IDE0010.severity = none
 dotnet_diagnostic.IDE0072.severity = none
+
+# Windows PowerShell 5.1 reads BOM-less scripts in the ANSI code page, which garbles Korean text.
+[*.ps1]
+charset = utf-8-bom

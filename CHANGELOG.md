@@ -16,6 +16,18 @@ All notable changes to this project are documented here; no release claim is mad
 - Windows enforcement, AppLocker, Application Identity, ACL/session, installer, and native recovery remain blocked pending isolated Windows evidence. WiX v7 eligibility is recorded, but `wix7` EULA acceptance is still pending.
 - Application identity PR #6/run `34708235735` and AppLocker preview PR #7/run `34710288258` are merged with clean hosted checks. Local 265/265 full tests pass in default and `TZ=UTC`. The 2026-09-13 physical Windows inventory is read-only context only and is not an authorized VM. Native apply and all Windows evidence gates remain `BLOCKED_WINDOWS_VM`.
 
+## 2026-10-26 — Member desktop fixes (`fix/packaged-apps`)
+
+### Fixed
+
+- Blocking mode blocked every packaged app (Start, Settings, Calculator, Notepad...) for everyone, because enforced EXE rules without packaged-app rules block them all (AppLocker event 8027). The policy now also allows every signed packaged app, and an existing EXE-only policy is replaced on the next pass after upgrading.
+- Member alerts never appeared while Windows "Do not disturb" was on, which Windows 11 turns on during games and full-screen apps. Alerts now use the notifier's own corner window.
+- The stop warning is now topmost and brought to the foreground.
+
+### Added
+
+- Lab tools for a real member desktop: `Set-LabAutoLogon.ps1`, `Invoke-LabDesktop.ps1`, `Start-LabDesktopApps.ps1`, `Start-LabDesktopGame.ps1`, and `Test-LabOwnerTools.ps1` phases `upgrade` and `packaged-apps` (plus `grant -Minutes`).
+
 ## 2026-10-26 — Owner tools (`feat/owner-tools`)
 
 ### Added

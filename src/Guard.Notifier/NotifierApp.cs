@@ -176,7 +176,7 @@ namespace Guard.Notifier
             BackColor = Color.FromArgb(255, 248, 225);
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            Padding = new Padding(LogicalToDeviceUnits(16), LogicalToDeviceUnits(12), LogicalToDeviceUnits(16), LogicalToDeviceUnits(14));
+            // The panel carries the inner spacing: a form's own padding does not move undocked children.
             FlowLayoutPanel panel = new()
             {
                 FlowDirection = FlowDirection.TopDown,
@@ -184,6 +184,7 @@ namespace Guard.Notifier
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Margin = Padding.Empty,
+                Padding = new Padding(LogicalToDeviceUnits(18), LogicalToDeviceUnits(14), LogicalToDeviceUnits(18), LogicalToDeviceUnits(16)),
             };
             Label title = new()
             {
@@ -197,7 +198,7 @@ namespace Guard.Notifier
             {
                 Text = message,
                 AutoSize = true,
-                MaximumSize = new Size(LogicalToDeviceUnits(360), 0),
+                MaximumSize = new Size(LogicalToDeviceUnits(440), 0),
                 Font = new Font("Malgun Gothic", 11F),
                 ForeColor = Color.FromArgb(32, 32, 32),
                 Margin = Padding.Empty,

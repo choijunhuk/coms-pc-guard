@@ -18,6 +18,7 @@ Policy under test: member `ComsGuardMemberA`, games `hostname` and `ping` (Micro
 | Member starts the game again during the restriction | `PASS` — "This program is blocked by group policy"; activity record `LaunchBlocked ComsGuardMemberA Ping Game` at 07:39:31. |
 | Notifier autostart | `PASS` — after a restart, `guard-notifier.exe` started in the member's session from the `Run` key (about 3 minutes after sign-in on the slow VM). |
 | Service stop time | `PASS` — `Stop-Service ComsPcGuard` took 3.1 s. |
+| Uninstall with the new allow-all step | `PASS` — `guard clear` removed revision 11 and confirmed an empty local policy; service, `Run` value and program folder removed, settings kept; no packaged-app block since the last start of Windows. |
 | Restart | `VM ISSUE, NOT PRODUCT` — twice the guest stayed on "Restarting" until reset. Windows itself finished: restart requested 16:42:44, sign-out done 16:43:01, `Kernel-General 13` (OS shutting down) 16:43:17, and the next boot logged `Kernel-Boot 20` "The last shutdown's success status was true". The VM's own reboot did not proceed. |
 
 ## Lab notes
